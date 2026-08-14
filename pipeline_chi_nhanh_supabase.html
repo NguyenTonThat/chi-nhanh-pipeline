@@ -98,6 +98,8 @@ const SUPABASE_ANON_KEY = "sb_publishable_nfU66O7jMnOWZLtW0K7XFw_8-ZLU-kW";
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại"];
+// Thứ tự tiến triển của phễu: Thành công/Thất bại là 2 trạng thái cuối cùng (cùng mức, đã kết thúc)
+const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Thành công":5, "Thất bại":5};
 const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
 const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
 let chartInstances = {};
@@ -174,6 +176,7 @@ function render(){
       (session.profile.role==='gd' ? '🏦 Giám đốc — ' : '👤 NV — ') + session.profile.full_name;
     app.innerHTML = session.profile.role==='gd' ? renderDirector() : renderEmployee();
     if(session.profile.role==='gd' && dirTab==='summary') drawDirCharts();
+    if(session.profile.role==='nv') computeTuanLabel();
   }
 }
 
@@ -272,7 +275,7 @@ function buildCustomerIndex(){
   // byCccd: CCCD -> bản ghi mới nhất của KH đó (CCCD là duy nhất nên không nhầm lẫn)
   // nameGroups: tên (thường) -> Map(CCCD hoặc '' nếu không có -> bản ghi mới nhất), để phát hiện trùng tên
   const byCccd = new Map(), nameGroups = new Map();
-  [...records].sort((a,b)=> (a.updatedAt||'').localeCompare(b.updatedAt||'')).forEach(r=>{
+  [...records].sort((a,b)=> compareRecency(a,b)).forEach(r=>{
     if(r.cccd && r.cccd.trim()) byCccd.set(r.cccd.trim(), r);
     if(r.tenKH && r.tenKH.trim()){
       const nameKey = r.tenKH.trim().toLowerCase();
@@ -286,6 +289,45 @@ function buildCustomerIndex(){
 
 let ambiguousMatches = [];
 
+// Tính Thứ 2 và Chủ nhật của tuần lịch chứa 1 ngày (ngayUpdate dạng YYYY-MM-DD)
+function getWeekRange(dateStr){
+  if(!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  if(isNaN(d.getTime())) return null;
+  const day = d.getDay(); // 0=CN,1=T2,...6=T7
+  const diffToMonday = (day===0 ? -6 : 1-day);
+  const monday = new Date(d); monday.setDate(d.getDate()+diffToMonday);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+  const pad = n => String(n).padStart(2,'0');
+  const disp = x => `${pad(x.getDate())}.${pad(x.getMonth()+1)}.${x.getFullYear()}`;
+  const iso = x => `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}`;
+  return {mondayISO:iso(monday), sundayISO:iso(sunday), mondayDisp:disp(monday), sundayDisp:disp(sunday)};
+}
+
+// Tự tính "Tuần N (từ ... đến ...)" = lần cập nhật thứ N của RIÊNG khách hàng này
+function computeTuanLabel(){
+  const elTuan = document.getElementById('f-tuan');
+  const elNgay = document.getElementById('f-ngayUpdate');
+  if(!elTuan || !elNgay) return;
+  const wk = getWeekRange(elNgay.value);
+  if(!wk){ elTuan.value = ''; return; }
+  const tenKH = (document.getElementById('f-tenKH').value || '').trim();
+  const cccd = (document.getElementById('f-cccd').value || '').trim();
+  const sameCustomer = records.filter(r=>{
+    if(editingId && r.id===editingId) return false;
+    return cccd ? (r.cccd && r.cccd.trim()===cccd) : (r.tenKH && r.tenKH.trim().toLowerCase()===tenKH.toLowerCase());
+  });
+  const weekSet = new Set();
+  sameCustomer.forEach(r=>{
+    const w = getWeekRange(r.ngayUpdate);
+    if(w) weekSet.add(w.mondayISO);
+  });
+  weekSet.add(wk.mondayISO);
+  const sortedWeeks = [...weekSet].sort();
+  const n = sortedWeeks.indexOf(wk.mondayISO) + 1;
+  elTuan.value = `Tuần ${n} (từ ${wk.mondayDisp} đến ${wk.sundayDisp})`;
+}
+
 function fillFromMatch(match){
   document.getElementById('f-tenKH').value = match.tenKH || '';
   document.getElementById('f-cccd').value = match.cccd || '';
@@ -293,9 +335,9 @@ function fillFromMatch(match){
   document.getElementById('f-ngheNghiep').value = match.ngheNghiep || '';
   document.getElementById('f-donVi').value = match.donVi || '';
   if(match.maAO) document.getElementById('f-maAO').value = match.maAO;
-  document.getElementById('f-tuan').value = match.tuan || '';
-  document.getElementById('f-ngayUpdate').value = match.ngayUpdate || todayStr();
+  document.getElementById('f-ngayUpdate').value = todayStr(); // lần cập nhật mới luôn tính theo hôm nay
   document.getElementById('f-trangThai').value = match.trangThai || 'Tiềm năng';
+  computeTuanLabel();
 }
 
 function clearAmbiguityPicker(){
@@ -335,20 +377,21 @@ function autofillCustomer(triggerField){
   const cccd = document.getElementById('f-cccd').value.trim();
 
   if(triggerField==='cccd'){
-    if(!cccd) return;
+    if(!cccd){ computeTuanLabel(); return; }
     const match = idx.byCccd.get(cccd);
-    if(match) fillFromMatch(match);
+    if(match) fillFromMatch(match); else computeTuanLabel();
     return;
   }
 
   // triggerField === 'tenKH'
-  if(!tenKH) return;
+  if(!tenKH){ computeTuanLabel(); return; }
   const group = idx.nameGroups.get(tenKH.toLowerCase());
-  if(!group) return;
+  if(!group){ computeTuanLabel(); return; }
   if(group.size === 1){
     fillFromMatch([...group.values()][0]);
   } else {
     showAmbiguityPicker([...group.values()]);
+    computeTuanLabel();
   }
 }
 
@@ -364,7 +407,7 @@ function renderForm(){
   const cccdOptions = [...idx.byCccd.keys()].map(c=>`<option value="${c}">`).join('');
   return `
     <div class="section-label">Thông tin khách hàng</div>
-    <div class="note">💡 Gõ tên hoặc CCCD của khách hàng đã từng nhập trước đây, hệ thống sẽ tự điền lại SĐT / nghề nghiệp / đơn vị công tác. Nếu trùng tên với CCCD khác nhau, hệ thống sẽ để anh chọn đúng người.</div>
+    <div class="note">💡 Gõ tên hoặc CCCD của khách hàng đã từng nhập trước đây, hệ thống sẽ tự điền lại SĐT / nghề nghiệp / đơn vị công tác. Nếu trùng tên với CCCD khác nhau, hệ thống sẽ để anh chọn đúng người. Ô "Tuần" bên dưới tự tính = lần cập nhật thứ mấy của riêng khách hàng này, theo tuần lịch (Thứ 2 → Chủ nhật) của Ngày update.</div>
     <div class="grid4">
       <div><label>Mã AO</label><input id="f-maAO" value="${v('maAO', session.profile.ma_ao||'')}"></div>
       <div><label>Tên nhân viên</label><input id="f-tenNV" value="${v('tenNhanVien', session.profile.full_name)}"></div>
@@ -379,8 +422,8 @@ function renderForm(){
     <datalist id="dl-cccd">${cccdOptions}</datalist>
     <div class="section-label">Trạng thái thực hiện</div>
     <div class="grid4">
-      <div><label>Tuần</label><input id="f-tuan" value="${v('tuan')}" placeholder="VD: Tuần 1 (29.06-06.07.2026)"></div>
-      <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate', todayStr())}"></div>
+      <div><label>Tuần (tự tính)</label><input id="f-tuan" value="${v('tuan')}" readonly style="background:#F3F5F6; color:var(--text-soft);"></div>
+      <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate', todayStr())}" onchange="computeTuanLabel()"></div>
       <div style="grid-column:span 2;"><label>Trạng thái pipeline</label><select id="f-trangThai">${statusOptions}</select></div>
     </div>
     <div class="section-label">Pipeline tuần (Trđ / Thẻ)</div>
@@ -389,6 +432,18 @@ function renderForm(){
       <button class="btn-add" onclick="submitForm()">${editingId? 'Lưu cập nhật' : 'Thêm bản ghi'}</button>
       ${editingId ? `<button class="btn-sm btn-danger" onclick="cancelEdit()">Hủy chỉnh sửa</button>` : ''}
     </div>`;
+}
+
+function getCustomerHighestStatus(tenKH, cccd, excludeId){
+  const sameCustomer = records.filter(r=>{
+    if(excludeId && r.id===excludeId) return false;
+    return cccd ? (r.cccd && r.cccd.trim()===cccd) : (r.tenKH && r.tenKH.trim().toLowerCase()===tenKH.toLowerCase());
+  });
+  let best = null;
+  sameCustomer.forEach(r=>{
+    if(!best || (STATUS_RANK[r.trangThai]||0) > (STATUS_RANK[best.trangThai]||0)) best = r;
+  });
+  return best;
 }
 
 async function submitForm(){
@@ -400,6 +455,24 @@ async function submitForm(){
     ngheNghiep:g('f-ngheNghiep'), donVi:g('f-donVi'), tuan:g('f-tuan'),
     ngayUpdate:g('f-ngayUpdate'), trangThai:g('f-trangThai')
   };
+
+  // Chặn lỡ tay chọn ngược trạng thái (VD: đang Đàm phán mà ghi nhầm về Liên hệ).
+  // Cho phép quay lại "Tiềm năng" nếu mức cao nhất trước đó đã Thành công/Thất bại (bắt đầu đợt mới).
+  const highest = getCustomerHighestStatus(tenKH, rec.cccd, editingId);
+  if(highest){
+    const highestRank = STATUS_RANK[highest.trangThai] || 0;
+    const newRank = STATUS_RANK[rec.trangThai] || 0;
+    const highestIsTerminal = highestRank === 5;
+    if(!highestIsTerminal && newRank < highestRank){
+      const ok = confirm(
+        `⚠️ Khách hàng "${tenKH}" đã từng đạt trạng thái "${highest.trangThai}" (cao hơn).\n` +
+        `Bạn đang chọn "${rec.trangThai}" (thấp hơn) — có thể do chọn nhầm.\n\n` +
+        `Bấm OK nếu chắc chắn muốn lưu, hoặc Hủy để chọn lại trạng thái.`
+      );
+      if(!ok) return;
+    }
+  }
+
   PRODUCTS.forEach(p => { rec[p.key] = parseFloat(document.getElementById('f-'+p.key).value) || 0; });
   const row = toDb(rec);
 
@@ -419,7 +492,7 @@ function cancelEdit(){ editingId=null; render(); }
 
 function renderEmployeeTable(mine){
   if(mine.length===0) return `<div class="empty">Chưa có dữ liệu. Hãy nhập khách hàng đầu tiên ở form phía trên.</div>`;
-  const sorted = [...mine].sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const sorted = [...mine].sort((a,b)=> compareByDate(b,a));
   const rows = sorted.map(r => `
     <tr>
       <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
@@ -505,7 +578,9 @@ function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(B
 function renderFilterBar(){
   const nvs = uniqueVals('tenNhanVien'); const tuans = uniqueVals('tuan');
   return `<div class="filters">
-    <input id="fl-kw" placeholder="Tìm tên KH / CCCD / SĐT..." value="${filters.kw}" oninput="filters.kw=this.value; render()">
+    <input id="fl-kw" placeholder="Tìm tên KH / CCCD / SĐT..." value="${filters.kw}"
+      onkeydown="if(event.key==='Enter'){ filters.kw=this.value; render(); }">
+    <button class="btn-sm" onclick="filters.kw=document.getElementById('fl-kw').value; render()">🔍 Tìm</button>
     <select onchange="filters.nv=this.value; render()"><option value="">Tất cả nhân viên</option>${nvs.map(n=>`<option value="${n}" ${filters.nv===n?'selected':''}>${n}</option>`).join('')}</select>
     <select onchange="filters.tuan=this.value; render()"><option value="">Tất cả các tuần</option>${tuans.map(t=>`<option value="${t}" ${filters.tuan===t?'selected':''}>${t}</option>`).join('')}</select>
     <select onchange="filters.trangThai=this.value; render()"><option value="">Tất cả trạng thái</option>${STATUS_LIST.map(s=>`<option value="${s}" ${filters.trangThai===s?'selected':''}>${s}</option>`).join('')}</select>
@@ -521,12 +596,47 @@ function applyFilters(list){
     return true;
   });
 }
+
+// Trích số thứ tự tuần từ chuỗi "Tuần 3 (từ ... đến ...)" -> 3. Trả về NaN nếu không có.
+function extractWeekNumber(tuanStr){
+  if(!tuanStr) return NaN;
+  const m = tuanStr.match(/Tu[aầ]n\s*(\d+)/i);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+// So sánh độ "mới" của 2 bản ghi: ưu tiên số Tuần trước (đúng với cách nhập theo tuần),
+// sau đó mới đến Ngày update / thời điểm lưu để phân định khi cùng tuần.
+function compareRecency(a, b){
+  const wkA = extractWeekNumber(a.tuan), wkB = extractWeekNumber(b.tuan);
+  if(!isNaN(wkA) && !isNaN(wkB) && wkA !== wkB) return wkA - wkB;
+  const dA = a.ngayUpdate || a.updatedAt || '';
+  const dB = b.ngayUpdate || b.updatedAt || '';
+  return dA.localeCompare(dB);
+}
+
+// Dùng khi so sánh giữa CÁC khách hàng khác nhau (số Tuần là riêng theo từng KH nên không so được) -
+// luôn so theo ngày thật.
+function compareByDate(a, b){
+  const dA = a.ngayUpdate || a.updatedAt || '';
+  const dB = b.ngayUpdate || b.updatedAt || '';
+  return dA.localeCompare(dB);
+}
+
+// Xác định trạng thái "hiện tại" của 1 khách hàng: ưu tiên mức tiến triển xa nhất trong phễu
+// (Tiềm năng < Liên hệ < Tư vấn < Đàm phán < Thành công/Thất bại); nếu cùng mức thì mới xét đến
+// bản ghi gần đây hơn (theo Tuần/ngày) để chọn.
+function compareFunnelThenRecency(a, b){
+  const rA = STATUS_RANK[a.trangThai] || 0, rB = STATUS_RANK[b.trangThai] || 0;
+  if(rA !== rB) return rA - rB;
+  return compareRecency(a, b);
+}
+
 function latestPerCustomer(list){
   const map = new Map();
   list.forEach(r=>{
     const key = (r.cccd && r.cccd.trim()) ? r.cccd.trim() : (r.tenKH+'|'+r.maAO);
     const cur = map.get(key);
-    if(!cur || (r.updatedAt||'') > (cur.updatedAt||'')) map.set(key, r);
+    if(!cur || compareFunnelThenRecency(r, cur) > 0) map.set(key, r);
   });
   return [...map.values()];
 }
@@ -534,7 +644,7 @@ function latestPerCustomer(list){
 function renderDirSummary(){
   if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
   const filtered = applyFilters(records);
-  const latest = latestPerCustomer(filtered).sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const latest = latestPerCustomer(filtered).sort((a,b)=> compareByDate(b,a));
   const byStatus = {}; STATUS_LIST.forEach(s=> byStatus[s] = latest.filter(r=>r.trangThai===s).length);
   const totalPipeline = {}; PRODUCTS.forEach(p => totalPipeline[p.key] = latest.reduce((s,r)=> s + (r[p.key]||0), 0));
   const byEmployee = {};
@@ -574,7 +684,7 @@ function renderDirSummary(){
 
 function renderDirHistory(){
   if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
-  const filtered = applyFilters(records).sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const filtered = applyFilters(records).sort((a,b)=> compareByDate(b,a));
   const rows = filtered.map(r => `<tr>
     <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
     <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
