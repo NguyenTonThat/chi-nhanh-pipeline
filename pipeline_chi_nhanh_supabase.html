@@ -111,7 +111,6 @@ const PRODUCTS = [
 let session = null;   // {user, profile:{full_name, role, ma_ao}}
 let records = [];
 let editingId = null;
-let loginError = "";
 
 function fromDb(row){
   const rec = {
@@ -145,8 +144,20 @@ async function checkExistingSession(){
 }
 
 async function hydrateSession(user){
-  const {data:profile} = await sb.from('profiles').select('*').eq('id', user.id).single();
-  if(!profile){ session = null; return; }
+  let {data:profile} = await sb.from('profiles').select('*').eq('id', user.id).single();
+  if(!profile){
+    // Hồ sơ bị thiếu (VD: đăng ký lúc còn bật xác nhận email) -> tự tạo hồ sơ mặc định là nhân viên
+    const defaultName = (user.email || '').split('@')[0];
+    const {data:created, error:createErr} = await sb.from('profiles')
+      .insert([{id:user.id, full_name:defaultName, role:'nv', ma_ao:null}])
+      .select().single();
+    if(createErr || !created){
+      authError = "Không tìm thấy/khởi tạo được hồ sơ người dùng. Vui lòng báo quản trị viên kiểm tra bảng profiles.";
+      session = null;
+      return;
+    }
+    profile = created;
+  }
   session = {user, profile};
   await loadRecords();
 }
@@ -166,28 +177,83 @@ function render(){
   }
 }
 
+let loginMode = 'login'; // 'login' | 'register'
+let authNotice = ""; // chỉ dùng cho thông báo cần đổi tab (VD: sau khi đăng ký xong)
+
 function renderLogin(){
   return `
   <div class="login-screen">
     <div class="login-card">
-      <h2>Đăng nhập hệ thống</h2>
-      <p>Dùng tài khoản được cấp bởi quản trị viên</p>
-      <label>Email</label>
-      <input id="in-email" type="email" placeholder="ten@chinhanh.vn">
-      <label>Mật khẩu</label>
-      <input id="in-pass" type="password" placeholder="••••••••">
-      <button class="btn-primary" onclick="doLogin()">Đăng nhập</button>
-      ${loginError ? `<div class="err">${loginError}</div>` : ''}
+      <h2>${loginMode==='login' ? 'Đăng nhập hệ thống' : 'Đăng ký tài khoản mới'}</h2>
+      <p>${loginMode==='login' ? 'Dùng tài khoản được cấp' : 'Tài khoản mới mặc định là nhân viên'}</p>
+      <div class="role-toggle">
+        <button id="tab-login" class="${loginMode==='login'?'active':''}" onclick="setLoginMode('login')">Đăng nhập</button>
+        <button id="tab-register" class="${loginMode==='register'?'active':''}" onclick="setLoginMode('register')">Đăng ký</button>
+      </div>
+      ${loginMode==='login' ? `
+        <label>Email</label>
+        <input id="in-email" type="email" placeholder="ten@chinhanh.vn">
+        <label>Mật khẩu</label>
+        <input id="in-pass" type="password" placeholder="••••••••">
+        <button class="btn-primary" onclick="doLogin()">Đăng nhập</button>
+      ` : `
+        <label>Họ tên</label>
+        <input id="reg-hoten" placeholder="VD: Trần Văn A">
+        <label>Mã AO</label>
+        <input id="reg-maAO" placeholder="VD: 3979">
+        <label>Email</label>
+        <input id="reg-email" type="email" placeholder="ten@chinhanh.vn">
+        <label>Mật khẩu</label>
+        <input id="reg-pass" type="password" placeholder="Tối thiểu 6 ký tự">
+        <button class="btn-primary" onclick="doRegister()">Đăng ký</button>
+      `}
+      <div id="auth-msg">${authNotice ? `<div class="hint">${authNotice}</div>` : ''}</div>
     </div>
   </div>`;
 }
 
+function showAuthMessage(msg, isError){
+  const box = document.getElementById('auth-msg');
+  if(!box) return;
+  box.innerHTML = msg ? `<div class="${isError ? 'err' : 'hint'}">${msg}</div>` : '';
+}
+
+function setLoginMode(m){ loginMode=m; authNotice=''; render(); }
+
+async function doRegister(){
+  showAuthMessage('');
+  const hoTen = document.getElementById('reg-hoten').value.trim();
+  const maAO = document.getElementById('reg-maAO').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-pass').value;
+  if(!hoTen || !email || !password){ showAuthMessage('Vui lòng điền đầy đủ Họ tên, Email và Mật khẩu.', true); return; }
+  if(password.length < 6){ showAuthMessage('Mật khẩu phải từ 6 ký tự trở lên.', true); return; }
+  const {data, error} = await sb.auth.signUp({email, password});
+  if(error){ showAuthMessage('Lỗi đăng ký: ' + error.message, true); return; }
+
+  if(data.session && data.user){
+    const {error:profErr} = await sb.from('profiles').insert([
+      {id:data.user.id, full_name:hoTen, role:'nv', ma_ao:maAO}
+    ]);
+    if(profErr){ showAuthMessage('Tạo tài khoản thành công nhưng lỗi khi lưu hồ sơ: ' + profErr.message, true); return; }
+    await sb.auth.signOut();
+    authNotice = "Đăng ký thành công! Vui lòng đăng nhập bằng email và mật khẩu vừa tạo.";
+    loginMode = 'login';
+    render();
+  } else {
+    authNotice = "Đăng ký thành công. Vui lòng kiểm tra email để xác nhận, sau đó quay lại đăng nhập.";
+    loginMode = 'login';
+    render();
+  }
+}
+
 async function doLogin(){
-  loginError = "";
+  showAuthMessage('');
   const email = document.getElementById('in-email').value.trim();
   const password = document.getElementById('in-pass').value;
+  if(!email || !password){ showAuthMessage('Vui lòng nhập đầy đủ Email và Mật khẩu.', true); return; }
   const {data, error} = await sb.auth.signInWithPassword({email, password});
-  if(error){ loginError = "Sai email hoặc mật khẩu."; render(); return; }
+  if(error){ showAuthMessage('Lỗi đăng nhập: ' + error.message, true); return; }
   await hydrateSession(data.user);
   render();
 }
@@ -203,33 +269,87 @@ function renderEmployee(){
 }
 
 function buildCustomerIndex(){
-  // map theo CCCD và theo tên KH (không phân biệt hoa/thường) -> bản ghi mới nhất của KH đó
-  const byCccd = new Map(), byName = new Map();
+  // byCccd: CCCD -> bản ghi mới nhất của KH đó (CCCD là duy nhất nên không nhầm lẫn)
+  // nameGroups: tên (thường) -> Map(CCCD hoặc '' nếu không có -> bản ghi mới nhất), để phát hiện trùng tên
+  const byCccd = new Map(), nameGroups = new Map();
   [...records].sort((a,b)=> (a.updatedAt||'').localeCompare(b.updatedAt||'')).forEach(r=>{
     if(r.cccd && r.cccd.trim()) byCccd.set(r.cccd.trim(), r);
-    if(r.tenKH && r.tenKH.trim()) byName.set(r.tenKH.trim().toLowerCase(), r);
+    if(r.tenKH && r.tenKH.trim()){
+      const nameKey = r.tenKH.trim().toLowerCase();
+      const cccdKey = (r.cccd && r.cccd.trim()) ? r.cccd.trim() : '';
+      if(!nameGroups.has(nameKey)) nameGroups.set(nameKey, new Map());
+      nameGroups.get(nameKey).set(cccdKey, r);
+    }
   });
-  return {byCccd, byName};
+  return {byCccd, nameGroups};
 }
 
-function autofillCustomer(triggerField){
-  const idx = buildCustomerIndex();
-  const tenKH = document.getElementById('f-tenKH').value.trim();
-  const cccd = document.getElementById('f-cccd').value.trim();
-  let match = null;
-  if(triggerField==='cccd' && cccd) match = idx.byCccd.get(cccd);
-  if(triggerField==='tenKH' && tenKH) match = idx.byName.get(tenKH.toLowerCase());
-  if(!match) return;
-  document.getElementById('f-tenKH').value = match.tenKH || tenKH;
-  document.getElementById('f-cccd').value = match.cccd || cccd;
+let ambiguousMatches = [];
+
+function fillFromMatch(match){
+  document.getElementById('f-tenKH').value = match.tenKH || '';
+  document.getElementById('f-cccd').value = match.cccd || '';
   document.getElementById('f-sdt').value = match.sdt || '';
   document.getElementById('f-ngheNghiep').value = match.ngheNghiep || '';
   document.getElementById('f-donVi').value = match.donVi || '';
   if(match.maAO) document.getElementById('f-maAO').value = match.maAO;
-  // Load trạng thái thực hiện gần nhất của khách hàng này
   document.getElementById('f-tuan').value = match.tuan || '';
   document.getElementById('f-ngayUpdate').value = match.ngayUpdate || todayStr();
   document.getElementById('f-trangThai').value = match.trangThai || 'Tiềm năng';
+}
+
+function clearAmbiguityPicker(){
+  const picker = document.getElementById('name-ambiguity-picker');
+  if(picker) picker.innerHTML = '';
+}
+
+function showAmbiguityPicker(matches){
+  ambiguousMatches = matches;
+  document.getElementById('f-cccd').value = ''; // không đoán bừa, để trống chờ chọn
+  const options = matches.map((m,i)=>
+    `<option value="${i}">${m.cccd || '(không có CCCD)'} — SĐT ${m.sdt||'?'} — ${m.donVi||m.ngheNghiep||'?'}</option>`
+  ).join('');
+  const picker = document.getElementById('name-ambiguity-picker');
+  if(picker){
+    picker.innerHTML = `
+      <div class="note" style="background:#FDEDEC; border-color:#F3B9B0; margin-top:8px;">
+        ⚠️ Có ${matches.length} khách hàng trùng tên "${matches[0].tenKH}". Vui lòng chọn đúng người để điền CCCD:
+        <select onchange="selectAmbiguousCustomer(this.value)" style="margin-top:8px;">
+          <option value="">-- Chọn CCCD đúng --</option>
+          ${options}
+        </select>
+      </div>`;
+  }
+}
+
+function selectAmbiguousCustomer(i){
+  if(i==='') return;
+  fillFromMatch(ambiguousMatches[i]);
+  clearAmbiguityPicker();
+}
+
+function autofillCustomer(triggerField){
+  const idx = buildCustomerIndex();
+  clearAmbiguityPicker();
+  const tenKH = document.getElementById('f-tenKH').value.trim();
+  const cccd = document.getElementById('f-cccd').value.trim();
+
+  if(triggerField==='cccd'){
+    if(!cccd) return;
+    const match = idx.byCccd.get(cccd);
+    if(match) fillFromMatch(match);
+    return;
+  }
+
+  // triggerField === 'tenKH'
+  if(!tenKH) return;
+  const group = idx.nameGroups.get(tenKH.toLowerCase());
+  if(!group) return;
+  if(group.size === 1){
+    fillFromMatch([...group.values()][0]);
+  } else {
+    showAmbiguityPicker([...group.values()]);
+  }
 }
 
 function todayStr(){ return new Date().toISOString().slice(0,10); }
@@ -240,11 +360,11 @@ function renderForm(){
   const productRows = PRODUCTS.map(p => `<div><label>${p.label}</label><input type="number" step="any" id="f-${p.key}" value="${v(p.key,'')}" placeholder="0"></div>`).join('');
   const statusOptions = STATUS_LIST.map(s=>`<option value="${s}" ${v('trangThai','Tiềm năng')===s?'selected':''}>${s}</option>`).join('');
   const idx = buildCustomerIndex();
-  const nameOptions = [...idx.byName.values()].map(r=>`<option value="${r.tenKH}">`).join('');
+  const nameOptions = [...idx.nameGroups.entries()].map(([key,group])=>`<option value="${[...group.values()][0].tenKH}">`).join('');
   const cccdOptions = [...idx.byCccd.keys()].map(c=>`<option value="${c}">`).join('');
   return `
     <div class="section-label">Thông tin khách hàng</div>
-    <div class="note">💡 Gõ tên hoặc CCCD của khách hàng đã từng nhập trước đây, hệ thống sẽ tự điền lại SĐT / nghề nghiệp / đơn vị công tác.</div>
+    <div class="note">💡 Gõ tên hoặc CCCD của khách hàng đã từng nhập trước đây, hệ thống sẽ tự điền lại SĐT / nghề nghiệp / đơn vị công tác. Nếu trùng tên với CCCD khác nhau, hệ thống sẽ để anh chọn đúng người.</div>
     <div class="grid4">
       <div><label>Mã AO</label><input id="f-maAO" value="${v('maAO', session.profile.ma_ao||'')}"></div>
       <div><label>Tên nhân viên</label><input id="f-tenNV" value="${v('tenNhanVien', session.profile.full_name)}"></div>
@@ -254,6 +374,7 @@ function renderForm(){
       <div><label>Nghề nghiệp</label><input id="f-ngheNghiep" value="${v('ngheNghiep')}"></div>
       <div style="grid-column:span 2;"><label>Đơn vị công tác</label><input id="f-donVi" value="${v('donVi')}"></div>
     </div>
+    <div id="name-ambiguity-picker"></div>
     <datalist id="dl-ten-kh">${nameOptions}</datalist>
     <datalist id="dl-cccd">${cccdOptions}</datalist>
     <div class="section-label">Trạng thái thực hiện</div>
