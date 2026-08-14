@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quản lý Pipeline Khách hàng - Chi nhánh</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --navy:#10263F; --navy-2:#16324F; --teal:#0E7C7B; --teal-light:#E4F3F2;
+    --gold:#C9A227; --bg:#F5F7F9; --card:#FFFFFF; --line:#E1E6EA;
+    --text:#1C2B36; --text-soft:#5B6B76;
+    --red:#C0392B; --orange:#D97706; --green:#1E8E5A; --blue:#2563A8; --cyan:#0E8FA1; --yellow:#B8860B;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:'Segoe UI','Inter',system-ui,-apple-system,Roboto,Arial,sans-serif;}
+  .topbar{background:linear-gradient(135deg,var(--navy),var(--navy-2)); color:#fff; padding:16px 24px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 2px 8px rgba(0,0,0,0.15);}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--gold);}
+  .brand h1{font-size:16px; margin:0; font-weight:600;}
+  .brand small{display:block; font-size:11px; color:#B9C6D2; margin-top:2px;}
+  .user-chip{display:flex; align-items:center; gap:10px; font-size:13px;}
+  .user-chip button{background:rgba(255,255,255,0.12); color:#fff; border:1px solid rgba(255,255,255,0.25); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:12px;}
+  .user-chip button:hover{background:rgba(255,255,255,0.22);}
+  .wrap{max-width:1180px; margin:0 auto; padding:24px;}
+  .login-screen{min-height:calc(100vh - 64px); display:flex; align-items:center; justify-content:center;}
+  .login-card{background:var(--card); border-radius:16px; box-shadow:0 10px 30px rgba(16,38,63,0.12); padding:36px; width:380px; border-top:4px solid var(--gold);}
+  .login-card h2{margin:0 0 4px; font-size:19px; color:var(--navy);}
+  .login-card p{margin:0 0 22px; font-size:13px; color:var(--text-soft);}
+  label{display:block; font-size:12px; font-weight:600; color:var(--text-soft); margin:12px 0 6px;}
+  input,select{width:100%; padding:9px 11px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; color:var(--text); background:#fff; outline:none;}
+  input:focus,select:focus{border-color:var(--teal);}
+  .btn-primary{margin-top:20px; width:100%; padding:11px; background:var(--navy); color:#fff; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;}
+  .btn-primary:hover{background:var(--navy-2);}
+  .err{color:var(--red); font-size:12.5px; margin-top:10px;}
+  .tabs{display:flex; gap:6px; margin-bottom:18px; border-bottom:1.5px solid var(--line);}
+  .tabs button{padding:10px 16px; border:none; background:none; font-size:13.5px; font-weight:600; color:var(--text-soft); cursor:pointer; border-bottom:2.5px solid transparent; margin-bottom:-1.5px;}
+  .tabs button.active{color:var(--teal); border-bottom-color:var(--teal);}
+  .card{background:var(--card); border-radius:var(--radius); padding:20px; box-shadow:0 1px 3px rgba(16,38,63,0.06); border:1px solid var(--line); margin-bottom:18px;}
+  .card h3{margin:0 0 14px; font-size:14.5px; color:var(--navy);}
+  .grid4{display:grid; grid-template-columns:repeat(4,1fr); gap:12px 16px;}
+  @media(max-width:800px){.grid4{grid-template-columns:1fr 1fr;}}
+  .section-label{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--teal); margin:18px 0 8px; padding-top:10px; border-top:1px dashed var(--line);}
+  .section-label:first-child{border-top:none; margin-top:0; padding-top:0;}
+  table{width:100%; border-collapse:collapse; font-size:12.8px;}
+  th{text-align:left; padding:9px 10px; background:var(--navy); color:#fff; font-weight:600; white-space:nowrap;}
+  td{padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap;}
+  tr:hover td{background:#F8FBFB;}
+  .table-scroll{overflow-x:auto; border-radius:8px; border:1px solid var(--line);}
+  .badge{padding:3px 9px; border-radius:20px; font-size:11px; font-weight:700; display:inline-block; color:#fff;}
+  .b-tiemnang{background:var(--blue);} .b-lienhe{background:var(--cyan);} .b-tuvan{background:var(--yellow);}
+  .b-damphan{background:var(--orange);} .b-thanhcong{background:var(--green);} .b-thatbai{background:var(--red);}
+  .stat-cards{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:18px;}
+  @media(max-width:900px){.stat-cards{grid-template-columns:repeat(3,1fr);}}
+  .stat{background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; text-align:center;}
+  .stat .num{font-size:20px; font-weight:700; color:var(--navy);}
+  .stat .lbl{font-size:10.5px; color:var(--text-soft); margin-top:2px;}
+  .filters{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .filters select, .filters input{width:auto; min-width:150px;}
+  .btn-sm{padding:6px 12px; font-size:12px; border-radius:6px; border:1.5px solid var(--teal); background:#fff; color:var(--teal); cursor:pointer; font-weight:600;}
+  .btn-sm:hover{background:var(--teal-light);}
+  .btn-add{background:var(--teal); color:#fff; border:none; padding:10px 18px; border-radius:8px; font-size:13.5px; font-weight:600; cursor:pointer;}
+  .btn-danger{border-color:var(--red); color:var(--red);}
+  .btn-danger:hover{background:#FDEDEC;}
+  .empty{text-align:center; padding:40px 20px; color:var(--text-soft); font-size:13.5px;}
+  .loading{text-align:center; padding:60px; color:var(--text-soft);}
+  .note{font-size:11.5px; color:var(--text-soft); background:#FFF8E7; border:1px solid #F0E0A8; padding:10px 12px; border-radius:8px; margin-bottom:16px;}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="dot"></div>
+    <div><h1>Quản lý Pipeline Khách hàng</h1><small>Chi nhánh · Kết nối Supabase</small></div>
+  </div>
+  <div class="user-chip" id="user-chip" style="display:none;">
+    <span id="user-label"></span>
+    <button onclick="logout()">Đăng xuất</button>
+  </div>
+</div>
+<div class="wrap" id="app"><div class="loading">Đang tải...</div></div>
+
+<script>
+/* ============ 1. CẤU HÌNH SUPABASE — DÁN THÔNG TIN CỦA ANH VÀO ĐÂY ============ */
+const SUPABASE_URL = "https://izufeangdonspfjovkkq.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_nfU66O7jMnOWZLtW0K7XFw_8-ZLU-kW";
+/* =============================================================================== */
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại"];
+const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
+const PRODUCTS = [
+  {key:"choVay", db:"cho_vay", label:"Cho vay"}, {key:"huyDong", db:"huy_dong", label:"Huy động"},
+  {key:"the", db:"the", label:"Thẻ"}, {key:"bhnt", db:"bhnt", label:"BHNT"},
+  {key:"bhpnt", db:"bhpnt", label:"BHPNT"}, {key:"kdhn", db:"kdhn", label:"KDHN"},
+  {key:"traiPhieu", db:"trai_phieu", label:"Trái phiếu"}, {key:"tkHDT", db:"tk_hdt", label:"TK HĐT"}
+];
+
+let session = null;   // {user, profile:{full_name, role, ma_ao}}
+let records = [];
+let editingId = null;
+let loginError = "";
+
+function fromDb(row){
+  const rec = {
+    id:row.id, ownerId:row.owner_id, maAO:row.ma_ao, tenNhanVien:row.ten_nhan_vien, tenKH:row.ten_kh,
+    cccd:row.cccd, sdt:row.sdt, ngheNghiep:row.nghe_nghiep, donVi:row.don_vi, tuan:row.tuan,
+    ngayUpdate:row.ngay_update, trangThai:row.trang_thai, updatedAt:row.updated_at
+  };
+  PRODUCTS.forEach(p => rec[p.key] = row[p.db]);
+  return rec;
+}
+function toDb(rec){
+  const row = {
+    ma_ao:rec.maAO, ten_nhan_vien:rec.tenNhanVien, ten_kh:rec.tenKH, cccd:rec.cccd, sdt:rec.sdt,
+    nghe_nghiep:rec.ngheNghiep, don_vi:rec.donVi, tuan:rec.tuan, ngay_update:rec.ngayUpdate || null,
+    trang_thai:rec.trangThai, updated_at:new Date().toISOString()
+  };
+  PRODUCTS.forEach(p => row[p.db] = rec[p.key]);
+  return row;
+}
+
+async function loadRecords(){
+  const {data, error} = await sb.from('pipeline_records').select('*');
+  if(error){ console.error(error); records = []; return; }
+  records = data.map(fromDb);
+}
+
+async function checkExistingSession(){
+  const {data:{session:s}} = await sb.auth.getSession();
+  if(s){ await hydrateSession(s.user); }
+  render();
+}
+
+async function hydrateSession(user){
+  const {data:profile} = await sb.from('profiles').select('*').eq('id', user.id).single();
+  if(!profile){ session = null; return; }
+  session = {user, profile};
+  await loadRecords();
+}
+
+function render(){
+  const app = document.getElementById('app');
+  const chip = document.getElementById('user-chip');
+  if(!session){
+    chip.style.display='none';
+    app.innerHTML = renderLogin();
+  } else {
+    chip.style.display='flex';
+    document.getElementById('user-label').textContent =
+      (session.profile.role==='gd' ? '🏦 Giám đốc — ' : '👤 NV — ') + session.profile.full_name;
+    app.innerHTML = session.profile.role==='gd' ? renderDirector() : renderEmployee();
+  }
+}
+
+function renderLogin(){
+  return `
+  <div class="login-screen">
+    <div class="login-card">
+      <h2>Đăng nhập hệ thống</h2>
+      <p>Dùng tài khoản được cấp bởi quản trị viên</p>
+      <label>Email</label>
+      <input id="in-email" type="email" placeholder="ten@chinhanh.vn">
+      <label>Mật khẩu</label>
+      <input id="in-pass" type="password" placeholder="••••••••">
+      <button class="btn-primary" onclick="doLogin()">Đăng nhập</button>
+      ${loginError ? `<div class="err">${loginError}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function doLogin(){
+  loginError = "";
+  const email = document.getElementById('in-email').value.trim();
+  const password = document.getElementById('in-pass').value;
+  const {data, error} = await sb.auth.signInWithPassword({email, password});
+  if(error){ loginError = "Sai email hoặc mật khẩu."; render(); return; }
+  await hydrateSession(data.user);
+  render();
+}
+async function logout(){ await sb.auth.signOut(); session=null; records=[]; render(); }
+
+/* ---------- EMPLOYEE VIEW ---------- */
+function renderEmployee(){
+  const mine = records; // RLS đã tự lọc chỉ trả về bản ghi của nhân viên này
+  return `
+    <div class="card"><h3>➕ ${editingId? 'Cập nhật bản ghi' : 'Nhập thông tin khách hàng / cập nhật tuần'}</h3>${renderForm()}</div>
+    <div class="card"><h3>📋 Các khách hàng bạn đã nhập (${mine.length})</h3>${renderEmployeeTable(mine)}</div>
+  `;
+}
+
+function renderForm(){
+  const r = editingId ? records.find(x=>x.id===editingId) : null;
+  const v = (f, d='') => r ? (r[f] ?? d) : d;
+  const productRows = PRODUCTS.map(p => `<div><label>${p.label}</label><input type="number" step="any" id="f-${p.key}" value="${v(p.key,'')}" placeholder="0"></div>`).join('');
+  const statusOptions = STATUS_LIST.map(s=>`<option value="${s}" ${v('trangThai')===s?'selected':''}>${s}</option>`).join('');
+  return `
+    <div class="section-label">Thông tin khách hàng</div>
+    <div class="grid4">
+      <div><label>Mã AO</label><input id="f-maAO" value="${v('maAO', session.profile.ma_ao||'')}"></div>
+      <div><label>Tên nhân viên</label><input id="f-tenNV" value="${v('tenNhanVien', session.profile.full_name)}"></div>
+      <div><label>Tên khách hàng</label><input id="f-tenKH" value="${v('tenKH')}"></div>
+      <div><label>CCCD</label><input id="f-cccd" value="${v('cccd')}"></div>
+      <div><label>Số điện thoại</label><input id="f-sdt" value="${v('sdt')}"></div>
+      <div><label>Nghề nghiệp</label><input id="f-ngheNghiep" value="${v('ngheNghiep')}"></div>
+      <div style="grid-column:span 2;"><label>Đơn vị công tác</label><input id="f-donVi" value="${v('donVi')}"></div>
+    </div>
+    <div class="section-label">Trạng thái thực hiện</div>
+    <div class="grid4">
+      <div><label>Tuần</label><input id="f-tuan" value="${v('tuan')}" placeholder="VD: Tuần 1 (29.06-06.07.2026)"></div>
+      <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate')}"></div>
+      <div style="grid-column:span 2;"><label>Trạng thái pipeline</label><select id="f-trangThai">${statusOptions}</select></div>
+    </div>
+    <div class="section-label">Pipeline tuần (Trđ / Thẻ)</div>
+    <div class="grid4">${productRows}</div>
+    <div style="display:flex; gap:10px; margin-top:20px;">
+      <button class="btn-add" onclick="submitForm()">${editingId? 'Lưu cập nhật' : 'Thêm bản ghi'}</button>
+      ${editingId ? `<button class="btn-sm btn-danger" onclick="cancelEdit()">Hủy chỉnh sửa</button>` : ''}
+    </div>`;
+}
+
+async function submitForm(){
+  const g = id => document.getElementById(id).value.trim();
+  const tenKH = g('f-tenKH'), tenNV = g('f-tenNV');
+  if(!tenKH || !tenNV){ alert('Vui lòng nhập tối thiểu Tên nhân viên và Tên khách hàng.'); return; }
+  const rec = {
+    maAO:g('f-maAO'), tenNhanVien:tenNV, tenKH, cccd:g('f-cccd'), sdt:g('f-sdt'),
+    ngheNghiep:g('f-ngheNghiep'), donVi:g('f-donVi'), tuan:g('f-tuan'),
+    ngayUpdate:g('f-ngayUpdate'), trangThai:g('f-trangThai')
+  };
+  PRODUCTS.forEach(p => { rec[p.key] = parseFloat(document.getElementById('f-'+p.key).value) || 0; });
+  const row = toDb(rec);
+
+  if(editingId){
+    const {error} = await sb.from('pipeline_records').update(row).eq('id', editingId);
+    if(error){ alert('Lỗi khi lưu: ' + error.message); return; }
+  } else {
+    row.owner_id = session.user.id;
+    const {error} = await sb.from('pipeline_records').insert([row]);
+    if(error){ alert('Lỗi khi thêm: ' + error.message); return; }
+  }
+  editingId = null;
+  await loadRecords();
+  render();
+}
+function cancelEdit(){ editingId=null; render(); }
+
+function renderEmployeeTable(mine){
+  if(mine.length===0) return `<div class="empty">Chưa có dữ liệu. Hãy nhập khách hàng đầu tiên ở form phía trên.</div>`;
+  const sorted = [...mine].sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const rows = sorted.map(r => `
+    <tr>
+      <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
+      <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+      <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td>
+      <td><button class="btn-sm" onclick="startEdit('${r.id}')">Sửa</button> <button class="btn-sm btn-danger" onclick="deleteRecord('${r.id}')">Xóa</button></td>
+    </tr>`).join('');
+  return `<div class="table-scroll"><table><thead><tr>
+      <th>Tuần</th><th>Ngày update</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Trạng thái</th><th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function startEdit(id){ editingId = id; render(); document.querySelector('.wrap').scrollIntoView({behavior:'smooth'}); }
+async function deleteRecord(id){
+  if(!confirm('Xóa bản ghi này?')) return;
+  const {error} = await sb.from('pipeline_records').delete().eq('id', id);
+  if(error){ alert('Lỗi khi xóa: ' + error.message); return; }
+  await loadRecords();
+  render();
+}
+
+/* ---------- DIRECTOR VIEW ---------- */
+let dirTab = 'summary';
+let filters = {nv:'', tuan:'', trangThai:'', kw:''};
+
+function renderDirector(){
+  return `
+    <div class="tabs">
+      <button class="${dirTab==='summary'?'active':''}" onclick="setDirTab('summary')">Tình hình hiện tại theo KH</button>
+      <button class="${dirTab==='history'?'active':''}" onclick="setDirTab('history')">Toàn bộ lịch sử cập nhật</button>
+    </div>
+    ${dirTab==='summary' ? renderDirSummary() : renderDirHistory()}`;
+}
+function setDirTab(t){ dirTab=t; render(); }
+function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(Boolean))].sort(); }
+
+function renderFilterBar(){
+  const nvs = uniqueVals('tenNhanVien'); const tuans = uniqueVals('tuan');
+  return `<div class="filters">
+    <input id="fl-kw" placeholder="Tìm tên KH / CCCD / SĐT..." value="${filters.kw}" oninput="filters.kw=this.value; render()">
+    <select onchange="filters.nv=this.value; render()"><option value="">Tất cả nhân viên</option>${nvs.map(n=>`<option value="${n}" ${filters.nv===n?'selected':''}>${n}</option>`).join('')}</select>
+    <select onchange="filters.tuan=this.value; render()"><option value="">Tất cả các tuần</option>${tuans.map(t=>`<option value="${t}" ${filters.tuan===t?'selected':''}>${t}</option>`).join('')}</select>
+    <select onchange="filters.trangThai=this.value; render()"><option value="">Tất cả trạng thái</option>${STATUS_LIST.map(s=>`<option value="${s}" ${filters.trangThai===s?'selected':''}>${s}</option>`).join('')}</select>
+    <button class="btn-sm" onclick="filters={nv:'',tuan:'',trangThai:'',kw:''}; render()">Xóa lọc</button>
+  </div>`;
+}
+function applyFilters(list){
+  return list.filter(r=>{
+    if(filters.nv && r.tenNhanVien!==filters.nv) return false;
+    if(filters.tuan && r.tuan!==filters.tuan) return false;
+    if(filters.trangThai && r.trangThai!==filters.trangThai) return false;
+    if(filters.kw){ const kw=filters.kw.toLowerCase(); if(!`${r.tenKH} ${r.cccd} ${r.sdt}`.toLowerCase().includes(kw)) return false; }
+    return true;
+  });
+}
+function latestPerCustomer(list){
+  const map = new Map();
+  list.forEach(r=>{
+    const key = (r.cccd && r.cccd.trim()) ? r.cccd.trim() : (r.tenKH+'|'+r.maAO);
+    const cur = map.get(key);
+    if(!cur || (r.updatedAt||'') > (cur.updatedAt||'')) map.set(key, r);
+  });
+  return [...map.values()];
+}
+
+function renderDirSummary(){
+  if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
+  const filtered = applyFilters(records);
+  const latest = latestPerCustomer(filtered).sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const byStatus = {}; STATUS_LIST.forEach(s=> byStatus[s] = latest.filter(r=>r.trangThai===s).length);
+  const totalPipeline = {}; PRODUCTS.forEach(p => totalPipeline[p.key] = latest.reduce((s,r)=> s + (r[p.key]||0), 0));
+
+  const statCards = `<div class="stat-cards">
+    <div class="stat"><div class="num">${latest.length}</div><div class="lbl">Tổng khách hàng</div></div>
+    ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
+  </div>`;
+  const productTotals = `<div class="card"><h3>💰 Tổng Pipeline theo sản phẩm (trạng thái mới nhất mỗi KH)</h3>
+    <div class="grid4">${PRODUCTS.map(p=>`<div class="stat"><div class="num">${totalPipeline[p.key].toLocaleString('vi-VN')}</div><div class="lbl">${p.label}</div></div>`).join('')}</div></div>`;
+
+  const rows = latest.map(r => `<tr>
+    <td><b>${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
+    <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+    <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
+  </tr>`).join('');
+
+  return `${statCards}${productTotals}<div class="card"><h3>📌 Tóm tắt tình hình hiện tại theo từng khách hàng (${latest.length})</h3>${renderFilterBar()}
+    <div class="table-scroll"><table><thead><tr>
+      <th>Tên KH</th><th>Nhân viên</th><th>Mã AO</th><th>SĐT</th><th>Tuần</th><th>Ngày update</th><th>Trạng thái</th>
+      <th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th>BHPNT</th><th>KDHN</th><th>Trái phiếu</th><th>TK HĐT</th>
+    </tr></thead><tbody>${rows || `<tr><td colspan="15" class="empty">Không có bản ghi phù hợp bộ lọc.</td></tr>`}</tbody></table></div></div>`;
+}
+
+function renderDirHistory(){
+  if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
+  const filtered = applyFilters(records).sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
+  const rows = filtered.map(r => `<tr>
+    <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
+    <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+    <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
+  </tr>`).join('');
+  return `<div class="card"><h3>🗂️ Toàn bộ lịch sử cập nhật (${filtered.length} / ${records.length})</h3>${renderFilterBar()}
+    <div class="table-scroll"><table><thead><tr>
+      <th>Tuần</th><th>Ngày update</th><th>Nhân viên</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Nghề nghiệp</th><th>ĐV công tác</th><th>Trạng thái</th>
+      <th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th>BHPNT</th><th>KDHN</th><th>Trái phiếu</th><th>TK HĐT</th>
+    </tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+checkExistingSession();
+</script>
+</body>
+</html>
