@@ -192,26 +192,64 @@ function renderEmployee(){
   `;
 }
 
+function buildCustomerIndex(){
+  // map theo CCCD và theo tên KH (không phân biệt hoa/thường) -> bản ghi mới nhất của KH đó
+  const byCccd = new Map(), byName = new Map();
+  [...records].sort((a,b)=> (a.updatedAt||'').localeCompare(b.updatedAt||'')).forEach(r=>{
+    if(r.cccd && r.cccd.trim()) byCccd.set(r.cccd.trim(), r);
+    if(r.tenKH && r.tenKH.trim()) byName.set(r.tenKH.trim().toLowerCase(), r);
+  });
+  return {byCccd, byName};
+}
+
+function autofillCustomer(triggerField){
+  const idx = buildCustomerIndex();
+  const tenKH = document.getElementById('f-tenKH').value.trim();
+  const cccd = document.getElementById('f-cccd').value.trim();
+  let match = null;
+  if(triggerField==='cccd' && cccd) match = idx.byCccd.get(cccd);
+  if(triggerField==='tenKH' && tenKH) match = idx.byName.get(tenKH.toLowerCase());
+  if(!match) return;
+  document.getElementById('f-tenKH').value = match.tenKH || tenKH;
+  document.getElementById('f-cccd').value = match.cccd || cccd;
+  document.getElementById('f-sdt').value = match.sdt || '';
+  document.getElementById('f-ngheNghiep').value = match.ngheNghiep || '';
+  document.getElementById('f-donVi').value = match.donVi || '';
+  if(match.maAO) document.getElementById('f-maAO').value = match.maAO;
+  // Load trạng thái thực hiện gần nhất của khách hàng này
+  document.getElementById('f-tuan').value = match.tuan || '';
+  document.getElementById('f-ngayUpdate').value = match.ngayUpdate || todayStr();
+  document.getElementById('f-trangThai').value = match.trangThai || 'Tiềm năng';
+}
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
 function renderForm(){
   const r = editingId ? records.find(x=>x.id===editingId) : null;
   const v = (f, d='') => r ? (r[f] ?? d) : d;
   const productRows = PRODUCTS.map(p => `<div><label>${p.label}</label><input type="number" step="any" id="f-${p.key}" value="${v(p.key,'')}" placeholder="0"></div>`).join('');
-  const statusOptions = STATUS_LIST.map(s=>`<option value="${s}" ${v('trangThai')===s?'selected':''}>${s}</option>`).join('');
+  const statusOptions = STATUS_LIST.map(s=>`<option value="${s}" ${v('trangThai','Tiềm năng')===s?'selected':''}>${s}</option>`).join('');
+  const idx = buildCustomerIndex();
+  const nameOptions = [...idx.byName.values()].map(r=>`<option value="${r.tenKH}">`).join('');
+  const cccdOptions = [...idx.byCccd.keys()].map(c=>`<option value="${c}">`).join('');
   return `
     <div class="section-label">Thông tin khách hàng</div>
+    <div class="note">💡 Gõ tên hoặc CCCD của khách hàng đã từng nhập trước đây, hệ thống sẽ tự điền lại SĐT / nghề nghiệp / đơn vị công tác.</div>
     <div class="grid4">
       <div><label>Mã AO</label><input id="f-maAO" value="${v('maAO', session.profile.ma_ao||'')}"></div>
       <div><label>Tên nhân viên</label><input id="f-tenNV" value="${v('tenNhanVien', session.profile.full_name)}"></div>
-      <div><label>Tên khách hàng</label><input id="f-tenKH" value="${v('tenKH')}"></div>
-      <div><label>CCCD</label><input id="f-cccd" value="${v('cccd')}"></div>
+      <div><label>Tên khách hàng</label><input id="f-tenKH" list="dl-ten-kh" value="${v('tenKH')}" onchange="autofillCustomer('tenKH')"></div>
+      <div><label>CCCD</label><input id="f-cccd" list="dl-cccd" value="${v('cccd')}" onchange="autofillCustomer('cccd')"></div>
       <div><label>Số điện thoại</label><input id="f-sdt" value="${v('sdt')}"></div>
       <div><label>Nghề nghiệp</label><input id="f-ngheNghiep" value="${v('ngheNghiep')}"></div>
       <div style="grid-column:span 2;"><label>Đơn vị công tác</label><input id="f-donVi" value="${v('donVi')}"></div>
     </div>
+    <datalist id="dl-ten-kh">${nameOptions}</datalist>
+    <datalist id="dl-cccd">${cccdOptions}</datalist>
     <div class="section-label">Trạng thái thực hiện</div>
     <div class="grid4">
       <div><label>Tuần</label><input id="f-tuan" value="${v('tuan')}" placeholder="VD: Tuần 1 (29.06-06.07.2026)"></div>
-      <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate')}"></div>
+      <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate', todayStr())}"></div>
       <div style="grid-column:span 2;"><label>Trạng thái pipeline</label><select id="f-trangThai">${statusOptions}</select></div>
     </div>
     <div class="section-label">Pipeline tuần (Trđ / Thẻ)</div>
