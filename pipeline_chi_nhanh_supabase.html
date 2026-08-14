@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quản lý Pipeline Khách hàng - Chi nhánh</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
   :root{
     --navy:#10263F; --navy-2:#16324F; --teal:#0E7C7B; --teal-light:#E4F3F2;
@@ -66,6 +67,12 @@
   .empty{text-align:center; padding:40px 20px; color:var(--text-soft); font-size:13.5px;}
   .loading{text-align:center; padding:60px; color:var(--text-soft);}
   .note{font-size:11.5px; color:var(--text-soft); background:#FFF8E7; border:1px solid #F0E0A8; padding:10px 12px; border-radius:8px; margin-bottom:16px;}
+  .charts-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media(max-width:900px){.charts-grid{grid-template-columns:1fr;}}
+  .chart-box{background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px;}
+  .chart-box h4{margin:0 0 10px; font-size:12.5px; color:var(--navy); font-weight:700;}
+  .chart-canvas-wrap{position:relative; height:230px;}
+  .chart-canvas-wrap.wide{height:260px;}
 </style>
 </head>
 <body>
@@ -92,6 +99,8 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại"];
 const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
+const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
+let chartInstances = {};
 const PRODUCTS = [
   {key:"choVay", db:"cho_vay", label:"Cho vay"}, {key:"huyDong", db:"huy_dong", label:"Huy động"},
   {key:"the", db:"the", label:"Thẻ"}, {key:"bhnt", db:"bhnt", label:"BHNT"},
@@ -153,6 +162,7 @@ function render(){
     document.getElementById('user-label').textContent =
       (session.profile.role==='gd' ? '🏦 Giám đốc — ' : '👤 NV — ') + session.profile.full_name;
     app.innerHTML = session.profile.role==='gd' ? renderDirector() : renderEmployee();
+    if(session.profile.role==='gd' && dirTab==='summary') drawDirCharts();
   }
 }
 
@@ -313,6 +323,52 @@ async function deleteRecord(id){
 /* ---------- DIRECTOR VIEW ---------- */
 let dirTab = 'summary';
 let filters = {nv:'', tuan:'', trangThai:'', kw:''};
+let dirChartData = null;
+
+function drawDirCharts(){
+  if(!dirChartData) return;
+  const {byStatus, totalPipeline, byEmployee} = dirChartData;
+  Object.values(chartInstances).forEach(c => c && c.destroy());
+  chartInstances = {};
+
+  const elStatus = document.getElementById('chart-status');
+  if(elStatus){
+    chartInstances.status = new Chart(elStatus, {
+      type:'doughnut',
+      data:{
+        labels:STATUS_LIST,
+        datasets:[{data:STATUS_LIST.map(s=>byStatus[s]), backgroundColor:STATUS_LIST.map(s=>STATUS_COLORS[s]), borderWidth:0}]
+      },
+      options:{maintainAspectRatio:false, plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}}}
+    });
+  }
+  const elProduct = document.getElementById('chart-product');
+  if(elProduct){
+    chartInstances.product = new Chart(elProduct, {
+      type:'bar',
+      data:{
+        labels:PRODUCTS.map(p=>p.label),
+        datasets:[{data:PRODUCTS.map(p=>totalPipeline[p.key]), backgroundColor:'#0E7C7B', borderRadius:5}]
+      },
+      options:{maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
+    });
+  }
+  const elEmp = document.getElementById('chart-employee');
+  if(elEmp){
+    const names = Object.keys(byEmployee);
+    chartInstances.employee = new Chart(elEmp, {
+      type:'bar',
+      data:{
+        labels:names,
+        datasets:[{data:names.map(n=>byEmployee[n]), backgroundColor:'#10263F', borderRadius:5}]
+      },
+      options:{
+        indexAxis:'y', maintainAspectRatio:false, plugins:{legend:{display:false}},
+        scales:{x:{beginAtZero:true, ticks:{stepSize:1}}}
+      }
+    });
+  }
+}
 
 function renderDirector(){
   return `
@@ -360,11 +416,25 @@ function renderDirSummary(){
   const latest = latestPerCustomer(filtered).sort((a,b)=> (b.updatedAt||'').localeCompare(a.updatedAt||''));
   const byStatus = {}; STATUS_LIST.forEach(s=> byStatus[s] = latest.filter(r=>r.trangThai===s).length);
   const totalPipeline = {}; PRODUCTS.forEach(p => totalPipeline[p.key] = latest.reduce((s,r)=> s + (r[p.key]||0), 0));
+  const byEmployee = {};
+  latest.forEach(r=>{ byEmployee[r.tenNhanVien] = (byEmployee[r.tenNhanVien]||0) + 1; });
+  dirChartData = {byStatus, totalPipeline, byEmployee};
 
   const statCards = `<div class="stat-cards">
     <div class="stat"><div class="num">${latest.length}</div><div class="lbl">Tổng khách hàng</div></div>
     ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
   </div>`;
+
+  const chartsSection = `
+    <div class="card">
+      <h3>📊 Biểu đồ tổng quan</h3>
+      <div class="charts-grid">
+        <div class="chart-box"><h4>Phân bổ khách hàng theo trạng thái</h4><div class="chart-canvas-wrap"><canvas id="chart-status"></canvas></div></div>
+        <div class="chart-box"><h4>Tổng pipeline theo sản phẩm (Trđ/Thẻ)</h4><div class="chart-canvas-wrap"><canvas id="chart-product"></canvas></div></div>
+      </div>
+      <div class="chart-box" style="margin-top:16px;"><h4>Số lượng khách hàng theo nhân viên</h4><div class="chart-canvas-wrap wide"><canvas id="chart-employee"></canvas></div></div>
+    </div>`;
+
   const productTotals = `<div class="card"><h3>💰 Tổng Pipeline theo sản phẩm (trạng thái mới nhất mỗi KH)</h3>
     <div class="grid4">${PRODUCTS.map(p=>`<div class="stat"><div class="num">${totalPipeline[p.key].toLocaleString('vi-VN')}</div><div class="lbl">${p.label}</div></div>`).join('')}</div></div>`;
 
@@ -374,7 +444,7 @@ function renderDirSummary(){
     <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
   </tr>`).join('');
 
-  return `${statCards}${productTotals}<div class="card"><h3>📌 Tóm tắt tình hình hiện tại theo từng khách hàng (${latest.length})</h3>${renderFilterBar()}
+  return `${statCards}${chartsSection}${productTotals}<div class="card"><h3>📌 Tóm tắt tình hình hiện tại theo từng khách hàng (${latest.length})</h3>${renderFilterBar()}
     <div class="table-scroll"><table><thead><tr>
       <th>Tên KH</th><th>Nhân viên</th><th>Mã AO</th><th>SĐT</th><th>Tuần</th><th>Ngày update</th><th>Trạng thái</th>
       <th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th>BHPNT</th><th>KDHN</th><th>Trái phiếu</th><th>TK HĐT</th>
