@@ -662,6 +662,7 @@ async function deleteRecord(id){
 
 /* ---------- DIRECTOR VIEW ---------- */
 let dirTab = 'summary';
+let settingsTab = 'approvals';
 let filters = {nv:'', tuan:'', trangThai:'', kw:''};
 let dirChartData = null;
 
@@ -775,12 +776,20 @@ function renderDirector(){
     <div class="tabs">
       <button class="${dirTab==='summary'?'active':''}" onclick="setDirTab('summary')">Tình hình hiện tại theo KH</button>
       <button class="${dirTab==='history'?'active':''}" onclick="setDirTab('history')">Toàn bộ lịch sử cập nhật</button>
-      ${isFullGd ? `<button class="${dirTab==='approvals'?'active':''}" onclick="setDirTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>` : ''}
-      ${isFullGd ? `<button class="${dirTab==='products'?'active':''}" onclick="setDirTab('products')">Quản lý chỉ tiêu</button>` : ''}
-      ${isFullGd ? `<button class="${dirTab==='statuses'?'active':''}" onclick="setDirTab('statuses')">Quản lý trạng thái</button>` : ''}
-      ${isFullGd ? `<button class="${dirTab==='users'?'active':''}" onclick="setDirTab('users')">Quản lý người dùng</button>` : ''}
+      ${isFullGd ? `<button class="${dirTab==='settings'?'active':''}" onclick="setDirTab('settings')">⚙️ Cài đặt${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>` : ''}
     </div>
-    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : dirTab==='approvals' ? renderDirApprovals() : dirTab==='products' ? renderDirProducts() : dirTab==='statuses' ? renderDirStatuses() : renderDirUsers()}`;
+    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : renderDirSettings()}`;
+}
+
+function renderDirSettings(){
+  return `
+    <div class="tabs" style="margin-bottom:8px;">
+      <button class="${settingsTab==='approvals'?'active':''}" onclick="setSettingsTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
+      <button class="${settingsTab==='products'?'active':''}" onclick="setSettingsTab('products')">Chỉ tiêu</button>
+      <button class="${settingsTab==='statuses'?'active':''}" onclick="setSettingsTab('statuses')">Trạng thái</button>
+      <button class="${settingsTab==='users'?'active':''}" onclick="setSettingsTab('users')">Người dùng</button>
+    </div>
+    ${settingsTab==='approvals' ? renderDirApprovals() : settingsTab==='products' ? renderDirProducts() : settingsTab==='statuses' ? renderDirStatuses() : renderDirUsers()}`;
 }
 
 function renderDirProducts(){
@@ -1031,8 +1040,7 @@ function renderDirUsers(){
     return `
       <div class="card">
         <h3>${g.label} (${users.length})</h3>
-        <div class="table-scroll"><table style="table-layout:fixed; width:100%;">
-          <colgroup><col style="width:22%"><col style="width:26%"><col style="width:14%"><col style="width:16%"><col style="width:22%"></colgroup>
+        <div class="table-scroll"><table>
           <thead><tr><th>Họ tên</th><th>Email</th><th style="text-align:center;">Mã AO</th><th style="text-align:center;">Trạng thái</th><th style="text-align:center;"></th></tr></thead>
           <tbody>${users.map(renderRow).join('')}</tbody></table></div>
       </div>`;
@@ -1045,8 +1053,12 @@ function renderDirUsers(){
 
 async function deleteUserProfile(id){
   if(!confirm('Xóa hồ sơ người dùng này khỏi danh sách? Lưu ý: không thu hồi được quyền đăng nhập thật của họ, chỉ nên dùng khi chắc chắn không cần theo dõi người này nữa. Nếu muốn chặn đăng nhập, hãy dùng "Vô hiệu hóa" thay vì Xóa.')) return;
-  const {error} = await sb.from('profiles').delete().eq('id', id);
+  const {data, error} = await sb.from('profiles').delete().eq('id', id).select();
   if(error){ alert('Lỗi khi xóa: ' + error.message); return; }
+  if(!data || data.length === 0){
+    alert('Không xóa được - có thể do chưa cấp quyền xóa trong Supabase (RLS). Hãy chạy lại câu lệnh SQL cấp quyền "gd delete profiles" rồi thử lại.');
+    return;
+  }
   await loadAllUsers();
   render();
 }
@@ -1061,12 +1073,18 @@ async function toggleUserActive(id, makeActive){
 }
 
 async function setDirTab(t){
-  if((t === 'approvals' || t === 'products' || t === 'users' || t === 'statuses') && session.profile.role !== 'gd') return;
+  if(t === 'settings' && session.profile.role !== 'gd') return;
   dirTab = t;
+  if(t === 'settings'){ await setSettingsTab(settingsTab); return; }
+  render();
+}
+
+async function setSettingsTab(t){
+  settingsTab = t;
   if(t === 'approvals') await loadPendingRequests();
   if(t === 'products') await loadProducts();
-  if(t === 'users') await loadAllUsers();
   if(t === 'statuses') await loadStatuses();
+  if(t === 'users') await loadAllUsers();
   render();
 }
 function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(Boolean))].sort(); }
