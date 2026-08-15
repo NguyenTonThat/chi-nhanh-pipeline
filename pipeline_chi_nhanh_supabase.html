@@ -1,9 +1,21 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Quản lý Pipeline Khách hàng - Chi nhánh</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0057B8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ACB Gia Kiệm">
+<title>ACB - Chi nhánh Gia Kiệm</title>
+<!-- Tất cả kích thước favicon -->
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="48x48" href="favicon-48x48.png">
+<!-- iPhone / iPad: Add to Home Screen -->
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-180x180.png">
+<!-- PWA -->
+<link rel="manifest" href="site.webmanifest">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -51,8 +63,8 @@
   .table-scroll{overflow-x:auto; border-radius:8px; border:1px solid var(--line);}
   .badge{padding:3px 9px; border-radius:20px; font-size:11px; font-weight:700; display:inline-block; color:#fff;}
   .b-tiemnang{background:var(--blue);} .b-lienhe{background:var(--cyan);} .b-tuvan{background:var(--yellow);}
-  .b-damphan{background:var(--orange);} .b-thanhcong{background:var(--green);} .b-thatbai{background:var(--red);}
-  .stat-cards{display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:18px;}
+  .b-damphan{background:var(--orange);} .b-dangxuly{background:#6D4AA8;} .b-thanhcong{background:var(--green);} .b-thatbai{background:var(--red);}
+  .stat-cards{display:grid; grid-template-columns:repeat(auto-fit, minmax(100px,1fr)); gap:10px; margin-bottom:18px;}
   @media(max-width:900px){.stat-cards{grid-template-columns:repeat(3,1fr);}}
   .stat{background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; text-align:center;}
   .stat .num{font-size:20px; font-weight:700; color:var(--navy);}
@@ -89,6 +101,15 @@
 </div>
 <div class="wrap" id="app"><div class="loading">Đang tải...</div></div>
 
+<div id="note-modal" style="display:none; position:fixed; inset:0; background:rgba(16,38,63,0.55); z-index:999; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this) closeNoteModal()">
+  <div style="background:#fff; border-radius:14px; padding:22px; max-width:440px; width:100%; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+    <h3 id="note-modal-title" style="margin:0 0 4px; color:var(--navy); font-size:15px;"></h3>
+    <div id="note-modal-meta" style="font-size:11.5px; color:var(--text-soft); margin-bottom:12px;"></div>
+    <div id="note-modal-body" style="font-size:13.5px; color:var(--text); white-space:pre-wrap; line-height:1.6; max-height:280px; overflow-y:auto; background:#F8FAFA; border-radius:8px; padding:12px; border:1px solid var(--line);"></div>
+    <button class="btn-sm" style="margin-top:16px;" onclick="closeNoteModal()">Đóng</button>
+  </div>
+</div>
+
 <script>
 /* ============ 1. CẤU HÌNH SUPABASE — DÁN THÔNG TIN CỦA ANH VÀO ĐÂY ============ */
 const SUPABASE_URL = "https://izufeangdonspfjovkkq.supabase.co";
@@ -97,11 +118,11 @@ const SUPABASE_ANON_KEY = "sb_publishable_nfU66O7jMnOWZLtW0K7XFw_8-ZLU-kW";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại"];
+const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Đang xử lý","Thành công","Thất bại"];
 // Thứ tự tiến triển của phễu: Thành công/Thất bại là 2 trạng thái cuối cùng (cùng mức, đã kết thúc)
-const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Thành công":5, "Thất bại":5};
-const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
-const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
+const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Đang xử lý":5, "Thành công":6, "Thất bại":6};
+const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Đang xử lý":"b-dangxuly","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
+const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Đang xử lý":"#6D4AA8","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
 let chartInstances = {};
 const PRODUCTS = [
   {key:"choVay", db:"cho_vay", label:"Cho vay"}, {key:"huyDong", db:"huy_dong", label:"Huy động"},
@@ -118,7 +139,7 @@ function fromDb(row){
   const rec = {
     id:row.id, ownerId:row.owner_id, maAO:row.ma_ao, tenNhanVien:row.ten_nhan_vien, tenKH:row.ten_kh,
     cccd:row.cccd, sdt:row.sdt, ngheNghiep:row.nghe_nghiep, donVi:row.don_vi, tuan:row.tuan,
-    ngayUpdate:row.ngay_update, trangThai:row.trang_thai, updatedAt:row.updated_at
+    ngayUpdate:row.ngay_update, trangThai:row.trang_thai, ghiChu:row.ghi_chu, updatedAt:row.updated_at
   };
   PRODUCTS.forEach(p => rec[p.key] = row[p.db]);
   return rec;
@@ -127,10 +148,24 @@ function toDb(rec){
   const row = {
     ma_ao:rec.maAO, ten_nhan_vien:rec.tenNhanVien, ten_kh:rec.tenKH, cccd:rec.cccd, sdt:rec.sdt,
     nghe_nghiep:rec.ngheNghiep, don_vi:rec.donVi, tuan:rec.tuan, ngay_update:rec.ngayUpdate || null,
-    trang_thai:rec.trangThai, updated_at:new Date().toISOString()
+    trang_thai:rec.trangThai, ghi_chu:rec.ghiChu || null, updated_at:new Date().toISOString()
   };
   PRODUCTS.forEach(p => row[p.db] = rec[p.key]);
   return row;
+}
+
+function showCustomerNote(recordId){
+  const r = records.find(x=>x.id===recordId);
+  if(!r) return;
+  document.getElementById('note-modal-title').textContent = `📝 ${r.tenKH}`;
+  document.getElementById('note-modal-meta').textContent =
+    `${r.tuan || ''}${r.trangThai ? ' · Trạng thái: '+r.trangThai : ''}`;
+  document.getElementById('note-modal-body').textContent =
+    (r.ghiChu && r.ghiChu.trim()) ? r.ghiChu : '(Không có ghi chú cho lần cập nhật này)';
+  document.getElementById('note-modal').style.display = 'flex';
+}
+function closeNoteModal(){
+  document.getElementById('note-modal').style.display = 'none';
 }
 
 async function loadRecords(){
@@ -412,6 +447,10 @@ function renderForm(){
       <div><label>Ngày update</label><input type="date" id="f-ngayUpdate" value="${v('ngayUpdate', todayStr())}" onchange="computeTuanLabel()"></div>
       <div style="grid-column:span 2;"><label>Trạng thái pipeline</label><select id="f-trangThai">${statusOptions}</select></div>
     </div>
+    <div style="margin-top:12px;">
+      <label>Ghi chú / diễn giải</label>
+      <textarea id="f-ghiChu" rows="2" placeholder="VD: Khách hẹn gọi lại tuần sau, đang cân nhắc lãi suất..." style="width:100%; padding:9px 11px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical;">${v('ghiChu')}</textarea>
+    </div>
     <div class="section-label">Pipeline tuần (Trđ / Thẻ)</div>
     <div class="grid4">${productRows}</div>
     <div style="display:flex; gap:10px; margin-top:20px;">
@@ -439,7 +478,7 @@ async function submitForm(){
   const rec = {
     maAO:g('f-maAO'), tenNhanVien:tenNV, tenKH, cccd:g('f-cccd'), sdt:g('f-sdt'),
     ngheNghiep:g('f-ngheNghiep'), donVi:g('f-donVi'), tuan:g('f-tuan'),
-    ngayUpdate:g('f-ngayUpdate'), trangThai:g('f-trangThai')
+    ngayUpdate:g('f-ngayUpdate'), trangThai:g('f-trangThai'), ghiChu:g('f-ghiChu')
   };
 
   // Chặn lỡ tay chọn ngược trạng thái (VD: đang Đàm phán mà ghi nhầm về Liên hệ).
@@ -481,7 +520,7 @@ function renderEmployeeTable(mine){
   const sorted = [...mine].sort((a,b)=> compareByDate(b,a));
   const rows = sorted.map(r => `
     <tr>
-      <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
+      <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
       <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
       <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td>
       <td><button class="btn-sm" onclick="startEdit('${r.id}')">Sửa</button> <button class="btn-sm btn-danger" onclick="deleteRecord('${r.id}')">Xóa</button></td>
@@ -507,7 +546,7 @@ let dirChartData = null;
 
 function drawDirCharts(){
   if(!dirChartData) return;
-  const {byStatus, totalPipeline, byEmployee} = dirChartData;
+  const {byStatus, totalPipelineByStatus, byEmployee} = dirChartData;
   Object.values(chartInstances).forEach(c => c && c.destroy());
   chartInstances = {};
 
@@ -522,15 +561,42 @@ function drawDirCharts(){
       options:{maintainAspectRatio:false, plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}}}
     });
   }
-  const elProduct = document.getElementById('chart-product');
-  if(elProduct){
-    chartInstances.product = new Chart(elProduct, {
+  const elProductMoney = document.getElementById('chart-product-money');
+  if(elProductMoney){
+    const moneyProducts = PRODUCTS.filter(p => p.key !== 'the');
+    const datasets = STATUS_LIST.map(s => ({
+      label: s,
+      data: moneyProducts.map(p => totalPipelineByStatus[s][p.key]),
+      backgroundColor: STATUS_COLORS[s]
+    }));
+    chartInstances.productMoney = new Chart(elProductMoney, {
+      type:'bar',
+      data:{ labels:moneyProducts.map(p=>p.label), datasets },
+      options:{
+        maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}},
+        scales:{ x:{stacked:true}, y:{stacked:true, beginAtZero:true} }
+      }
+    });
+  }
+  const elProductCard = document.getElementById('chart-product-card');
+  if(elProductCard){
+    const cardProduct = PRODUCTS.find(p => p.key === 'the');
+    chartInstances.productCard = new Chart(elProductCard, {
       type:'bar',
       data:{
-        labels:PRODUCTS.map(p=>p.label),
-        datasets:[{data:PRODUCTS.map(p=>totalPipeline[p.key]), backgroundColor:'#0E7C7B', borderRadius:5}]
+        labels:['Thẻ'],
+        datasets: STATUS_LIST.map(s => ({
+          label: s,
+          data: [totalPipelineByStatus[s][cardProduct.key]],
+          backgroundColor: STATUS_COLORS[s]
+        }))
       },
-      options:{maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}}}
+      options:{
+        maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}},
+        scales:{ x:{stacked:true}, y:{stacked:true, beginAtZero:true, ticks:{stepSize:1}} }
+      }
     });
   }
   const elEmp = document.getElementById('chart-employee');
@@ -646,9 +712,16 @@ function renderDirSummary(){
   const latest = latestPerCustomer(filtered).sort((a,b)=> compareByDate(b,a));
   const byStatus = {}; STATUS_LIST.forEach(s=> byStatus[s] = latest.filter(r=>r.trangThai===s).length);
   const totalPipeline = {}; PRODUCTS.forEach(p => totalPipeline[p.key] = latest.reduce((s,r)=> s + (r[p.key]||0), 0));
+  // Tổng pipeline theo sản phẩm, tách riêng theo từng trạng thái (để vẽ cột chồng)
+  const totalPipelineByStatus = {};
+  STATUS_LIST.forEach(s=>{
+    totalPipelineByStatus[s] = {};
+    const rowsOfStatus = latest.filter(r=>r.trangThai===s);
+    PRODUCTS.forEach(p => totalPipelineByStatus[s][p.key] = rowsOfStatus.reduce((sum,r)=> sum + (r[p.key]||0), 0));
+  });
   const byEmployee = {};
   latest.forEach(r=>{ byEmployee[r.tenNhanVien] = (byEmployee[r.tenNhanVien]||0) + 1; });
-  dirChartData = {byStatus, totalPipeline, byEmployee};
+  dirChartData = {byStatus, totalPipeline, totalPipelineByStatus, byEmployee};
 
   const statCards = `<div class="stat-cards">
     <div class="stat"><div class="num">${latest.length}</div><div class="lbl">Tổng khách hàng</div></div>
@@ -660,16 +733,19 @@ function renderDirSummary(){
       <h3>📊 Biểu đồ tổng quan</h3>
       <div class="charts-grid">
         <div class="chart-box"><h4>Phân bổ khách hàng theo trạng thái</h4><div class="chart-canvas-wrap"><canvas id="chart-status"></canvas></div></div>
-        <div class="chart-box"><h4>Tổng pipeline theo sản phẩm (Trđ/Thẻ)</h4><div class="chart-canvas-wrap"><canvas id="chart-product"></canvas></div></div>
+        <div class="chart-box"><h4>Số lượng khách hàng theo nhân viên</h4><div class="chart-canvas-wrap"><canvas id="chart-employee"></canvas></div></div>
       </div>
-      <div class="chart-box" style="margin-top:16px;"><h4>Số lượng khách hàng theo nhân viên</h4><div class="chart-canvas-wrap wide"><canvas id="chart-employee"></canvas></div></div>
+      <div class="charts-grid" style="margin-top:16px;">
+        <div class="chart-box"><h4>Pipeline theo sản phẩm, theo trạng thái (Triệu đồng)</h4><div class="chart-canvas-wrap wide"><canvas id="chart-product-money"></canvas></div></div>
+        <div class="chart-box"><h4>Số lượng Thẻ, theo trạng thái</h4><div class="chart-canvas-wrap wide"><canvas id="chart-product-card"></canvas></div></div>
+      </div>
     </div>`;
 
   const productTotals = `<div class="card"><h3>💰 Tổng Pipeline theo sản phẩm (trạng thái mới nhất mỗi KH)</h3>
     <div class="grid4">${PRODUCTS.map(p=>`<div class="stat"><div class="num">${totalPipeline[p.key].toLocaleString('vi-VN')}</div><div class="lbl">${p.label}</div></div>`).join('')}</div></div>`;
 
   const rows = latest.map(r => `<tr>
-    <td><b>${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
+    <td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
     <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
     <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
   </tr>`).join('');
@@ -685,7 +761,7 @@ function renderDirHistory(){
   if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
   const filtered = applyFilters(records).sort((a,b)=> compareByDate(b,a));
   const rows = filtered.map(r => `<tr>
-    <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b>${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
+    <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
     <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
     <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
   </tr>`).join('');
