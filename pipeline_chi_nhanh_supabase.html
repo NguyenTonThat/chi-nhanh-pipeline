@@ -662,7 +662,7 @@ async function deleteRecord(id){
 
 /* ---------- DIRECTOR VIEW ---------- */
 let dirTab = 'summary';
-let settingsTab = 'approvals';
+let settingsTab = 'products';
 let filters = {nv:'', tuan:'', trangThai:'', kw:''};
 let dirChartData = null;
 
@@ -784,10 +784,10 @@ function renderDirector(){
 function renderDirSettings(){
   return `
     <div class="tabs" style="margin-bottom:8px;">
-      <button class="${settingsTab==='approvals'?'active':''}" onclick="setSettingsTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
       <button class="${settingsTab==='products'?'active':''}" onclick="setSettingsTab('products')">Chỉ tiêu</button>
       <button class="${settingsTab==='statuses'?'active':''}" onclick="setSettingsTab('statuses')">Trạng thái</button>
       <button class="${settingsTab==='users'?'active':''}" onclick="setSettingsTab('users')">Người dùng</button>
+      <button class="${settingsTab==='approvals'?'active':''}" onclick="setSettingsTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
     </div>
     ${settingsTab==='approvals' ? renderDirApprovals() : settingsTab==='products' ? renderDirProducts() : settingsTab==='statuses' ? renderDirStatuses() : renderDirUsers()}`;
 }
@@ -797,7 +797,6 @@ function renderDirProducts(){
     <tr>
       <td><b>${p.label}</b></td>
       <td>${p.unit}</td>
-      <td><code>${p.key}</code></td>
       <td>
         <button class="btn-sm" onclick="moveProduct('${p.key}', -1)" ${i===0?'disabled':''} title="Chuyển lên">▲</button>
         <button class="btn-sm" onclick="moveProduct('${p.key}', 1)" ${i===PRODUCTS.length-1?'disabled':''} title="Chuyển xuống">▼</button>
@@ -808,7 +807,7 @@ function renderDirProducts(){
     <div class="card">
       <h3>🧩 Chỉ tiêu đang áp dụng (${PRODUCTS.length})</h3>
       <div class="note">Dùng nút ▲▼ để đổi thứ tự — thứ tự này sẽ áp dụng đồng bộ ở form nhập, các bảng và biểu đồ. Xóa 1 chỉ tiêu không xóa dữ liệu cũ đã nhập cho chỉ tiêu đó — chỉ ẩn nó khỏi form nhập và biểu đồ từ nay về sau. Phù hợp khi chỉ tiêu thay đổi theo từng thời kỳ (quý/năm).</div>
-      <div class="table-scroll"><table><thead><tr><th>Tên chỉ tiêu</th><th>Đơn vị</th><th>Mã</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-scroll"><table><thead><tr><th>Tên chỉ tiêu</th><th>Đơn vị</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <div class="card">
       <h3>➕ Thêm chỉ tiêu mới</h3>
@@ -855,7 +854,6 @@ function renderDirStatuses(){
     <tr>
       <td><span class="badge" style="background:${s.color};">${s.label}</span></td>
       <td>${s.rank}</td>
-      <td><code>${s.key}</code></td>
       <td>
         <button class="btn-sm" onclick="moveStatus('${s.key}', -1)" ${i===0?'disabled':''} title="Chuyển lên">▲</button>
         <button class="btn-sm" onclick="moveStatus('${s.key}', 1)" ${i===STATUSES.length-1?'disabled':''} title="Chuyển xuống">▼</button>
@@ -869,7 +867,7 @@ function renderDirStatuses(){
         Cột "Mức phễu" quyết định thứ tự tiến triển (số càng cao = càng cuối, dùng để cảnh báo lỡ tay chọn lùi và xác định trạng thái "hiện tại" của khách hàng). 2 trạng thái có thể cùng mức phễu (VD: Thành công = Thất bại). Nút ▲▼ chỉ đổi thứ tự hiển thị, không đổi mức phễu.
         Xóa 1 trạng thái không ảnh hưởng dữ liệu cũ đã nhập, chỉ ẩn khỏi các lựa chọn từ nay về sau.
       </div>
-      <div class="table-scroll"><table><thead><tr><th>Trạng thái</th><th>Mức phễu</th><th>Mã</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-scroll"><table><thead><tr><th>Trạng thái</th><th>Mức phễu</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
     <div class="card">
       <h3>➕ Thêm trạng thái mới</h3>
