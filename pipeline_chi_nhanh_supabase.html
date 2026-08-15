@@ -147,11 +147,18 @@ const SUPABASE_ANON_KEY = "sb_publishable_nfU66O7jMnOWZLtW0K7XFw_8-ZLU-kW";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại","Đang xử lý"];
-// Thứ tự tiến triển của phễu: Thành công/Thất bại là 2 trạng thái cuối cùng (cùng mức, đã kết thúc)
-const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Thành công":5, "Thất bại":5, "Đang xử lý":6};
-const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Đang xử lý":"b-dangxuly","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
-const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Đang xử lý":"#6D4AA8","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
+let STATUSES = []; // nạp động từ bảng "statuses" trong Supabase - giám đốc thêm/sửa/xóa/đổi thứ tự được
+let STATUS_LIST = []; // nhãn hiển thị theo đúng thứ tự
+let STATUS_RANK = {};  // nhãn -> mức phễu
+let STATUS_COLORS = {}; // nhãn -> màu hex
+
+async function loadStatuses(){
+  const {data, error} = await sb.from('statuses').select('*').eq('active', true).order('sort_order');
+  STATUSES = error ? [] : data;
+  STATUS_LIST = STATUSES.map(s => s.label);
+  STATUS_RANK = {}; STATUS_COLORS = {};
+  STATUSES.forEach(s => { STATUS_RANK[s.label] = s.rank; STATUS_COLORS[s.label] = s.color; });
+}
 let chartInstances = {};
 let PRODUCTS = []; // nạp động từ bảng "products" trong Supabase - giám đốc thêm/bớt được
 
@@ -245,6 +252,7 @@ async function loadRecords(){
 
 async function checkExistingSession(){
   await loadProducts();
+  await loadStatuses();
   const {data:{session:s}} = await sb.auth.getSession();
   if(s){ await hydrateSession(s.user); }
   render();
@@ -259,11 +267,17 @@ async function hydrateSession(user){
       .insert([{id:user.id, full_name:defaultName, role:'nv', ma_ao:null, email:user.email||null}])
       .select().single();
     if(createErr || !created){
-      authError = "Không tìm thấy/khởi tạo được hồ sơ người dùng. Vui lòng báo quản trị viên kiểm tra bảng profiles.";
+      authNotice = "Không tìm thấy/khởi tạo được hồ sơ người dùng. Vui lòng báo quản trị viên kiểm tra bảng profiles.";
       session = null;
       return;
     }
     profile = created;
+  }
+  if(profile.active === false){
+    authNotice = "Tài khoản này đã bị vô hiệu hóa. Vui lòng liên hệ giám đốc chi nhánh.";
+    session = null;
+    await sb.auth.signOut();
+    return;
   }
   session = {user, profile};
   await loadRecords();
@@ -278,10 +292,11 @@ function render(){
     app.innerHTML = renderLogin();
   } else {
     chip.style.display='flex';
-    document.getElementById('user-label').textContent =
-      (session.profile.role==='gd' ? '🏦 Giám đốc — ' : '👤 NV — ') + session.profile.full_name;
-    app.innerHTML = session.profile.role==='gd' ? renderDirector() : renderEmployee();
-    if(session.profile.role==='gd' && dirTab==='summary') drawDirCharts();
+    const roleLabel = session.profile.role==='gd' ? '🏦 Giám đốc — ' : session.profile.role==='ql' ? '🧭 Quản lý — ' : '👤 NV — ';
+    document.getElementById('user-label').textContent = roleLabel + session.profile.full_name;
+    const isDirectorView = session.profile.role==='gd' || session.profile.role==='ql';
+    app.innerHTML = isDirectorView ? renderDirector() : renderEmployee();
+    if(isDirectorView && dirTab==='summary') drawDirCharts();
     if(session.profile.role==='nv') computeTuanLabel();
   }
 }
@@ -332,6 +347,7 @@ function renderLogin(){
         <label>Vai trò mong muốn</label>
         <select id="reg-role">
           <option value="nv">Nhân viên</option>
+          <option value="ql">Quản lý (cần được duyệt)</option>
           <option value="gd">Giám đốc (cần được duyệt)</option>
         </select>
         <button class="btn-primary" onclick="doRegister()">Đăng ký</button>
@@ -355,23 +371,25 @@ async function doRegister(){
   const maAO = document.getElementById('reg-maAO').value.trim();
   const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-pass').value;
-  const wantsGd = document.getElementById('reg-role').value === 'gd';
+  const chosenRole = document.getElementById('reg-role').value; // 'nv' | 'ql' | 'gd'
+  const wantsElevated = chosenRole === 'gd' || chosenRole === 'ql';
   if(!hoTen || !email || !password){ showAuthMessage('Vui lòng điền đầy đủ Họ tên, Email và Mật khẩu.', true); return; }
   if(password.length < 6){ showAuthMessage('Mật khẩu phải từ 6 ký tự trở lên.', true); return; }
   const {data, error} = await sb.auth.signUp({email, password});
   if(error){ showAuthMessage('Lỗi đăng ký: ' + error.message, true); return; }
 
   if(data.session && data.user){
-    // Tài khoản LUÔN tạo với quyền nhân viên trước; nếu chọn "Giám đốc" thì chỉ ghi nhận
-    // yêu cầu chờ duyệt (gd_request_status = 'pending'), chưa được cấp quyền ngay.
+    // Tài khoản LUÔN tạo với quyền nhân viên trước; nếu chọn "Giám đốc"/"Quản lý" thì chỉ ghi nhận
+    // yêu cầu chờ duyệt (gd_request_status = 'pending', requested_role = vai trò muốn xin), chưa cấp quyền ngay.
     const {error:profErr} = await sb.from('profiles').insert([
       {id:data.user.id, full_name:hoTen, role:'nv', ma_ao:maAO, email,
-       gd_request_status: wantsGd ? 'pending' : null}
+       gd_request_status: wantsElevated ? 'pending' : null,
+       requested_role: wantsElevated ? chosenRole : null}
     ]);
     if(profErr){ showAuthMessage('Tạo tài khoản thành công nhưng lỗi khi lưu hồ sơ: ' + profErr.message, true); return; }
     await sb.auth.signOut();
-    authNotice = wantsGd
-      ? "Đăng ký thành công! Yêu cầu làm giám đốc đang chờ duyệt — trong lúc chờ, hãy đăng nhập bằng quyền nhân viên."
+    authNotice = wantsElevated
+      ? `Đăng ký thành công! Yêu cầu làm ${chosenRole==='gd'?'giám đốc':'quản lý'} đang chờ duyệt — trong lúc chờ, hãy đăng nhập bằng quyền nhân viên.`
       : "Đăng ký thành công! Vui lòng đăng nhập bằng email và mật khẩu vừa tạo.";
     loginMode = 'login';
     render();
@@ -589,7 +607,8 @@ async function submitForm(){
   if(highest){
     const highestRank = STATUS_RANK[highest.trangThai] || 0;
     const newRank = STATUS_RANK[rec.trangThai] || 0;
-    const highestIsTerminal = highestRank === STATUS_RANK["Đang xử lý"];
+    const maxRank = Math.max(...STATUSES.map(s=>s.rank), 0);
+    const highestIsTerminal = highestRank === maxRank;
     if(!highestIsTerminal && newRank < highestRank){
       const ok = confirm(
         `⚠️ Khách hàng "${tenKH}" đã từng đạt trạng thái "${highest.trangThai}" (cao hơn).\n` +
@@ -623,7 +642,7 @@ function renderEmployeeTable(mine){
   const rows = sorted.map(r => `
     <tr>
       <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
-      <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+      <td><span class="badge" style="background:${STATUS_COLORS[r.trangThai]||'#888'}">${r.trangThai||'-'}</span></td>
       ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
       <td><button class="btn-sm" onclick="startEdit('${r.id}')">Sửa</button> <button class="btn-sm btn-danger" onclick="deleteRecord('${r.id}')">Xóa</button></td>
     </tr>`).join('');
@@ -738,6 +757,12 @@ function drawDirCharts(){
 }
 
 let pendingRequests = [];
+let allUsers = [];
+
+async function loadAllUsers(){
+  const {data, error} = await sb.from('profiles').select('*').order('full_name');
+  allUsers = error ? [] : data;
+}
 
 async function loadPendingRequests(){
   const {data, error} = await sb.from('profiles').select('*').eq('gd_request_status','pending');
@@ -745,14 +770,17 @@ async function loadPendingRequests(){
 }
 
 function renderDirector(){
+  const isFullGd = session.profile.role === 'gd';
   return `
     <div class="tabs">
       <button class="${dirTab==='summary'?'active':''}" onclick="setDirTab('summary')">Tình hình hiện tại theo KH</button>
       <button class="${dirTab==='history'?'active':''}" onclick="setDirTab('history')">Toàn bộ lịch sử cập nhật</button>
-      <button class="${dirTab==='approvals'?'active':''}" onclick="setDirTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
-      <button class="${dirTab==='products'?'active':''}" onclick="setDirTab('products')">Quản lý chỉ tiêu</button>
+      ${isFullGd ? `<button class="${dirTab==='approvals'?'active':''}" onclick="setDirTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>` : ''}
+      ${isFullGd ? `<button class="${dirTab==='products'?'active':''}" onclick="setDirTab('products')">Quản lý chỉ tiêu</button>` : ''}
+      ${isFullGd ? `<button class="${dirTab==='statuses'?'active':''}" onclick="setDirTab('statuses')">Quản lý trạng thái</button>` : ''}
+      ${isFullGd ? `<button class="${dirTab==='users'?'active':''}" onclick="setDirTab('users')">Quản lý người dùng</button>` : ''}
     </div>
-    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : dirTab==='approvals' ? renderDirApprovals() : renderDirProducts()}`;
+    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : dirTab==='approvals' ? renderDirApprovals() : dirTab==='products' ? renderDirProducts() : dirTab==='statuses' ? renderDirStatuses() : renderDirUsers()}`;
 }
 
 function renderDirProducts(){
@@ -813,6 +841,90 @@ async function moveProduct(key, direction){
   render();
 }
 
+function renderDirStatuses(){
+  const rows = STATUSES.map((s,i) => `
+    <tr>
+      <td><span class="badge" style="background:${s.color};">${s.label}</span></td>
+      <td>${s.rank}</td>
+      <td><code>${s.key}</code></td>
+      <td>
+        <button class="btn-sm" onclick="moveStatus('${s.key}', -1)" ${i===0?'disabled':''} title="Chuyển lên">▲</button>
+        <button class="btn-sm" onclick="moveStatus('${s.key}', 1)" ${i===STATUSES.length-1?'disabled':''} title="Chuyển xuống">▼</button>
+        <button class="btn-sm btn-danger" onclick="removeStatus('${s.key}')">✖️ Xóa</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="card">
+      <h3>🎯 Trạng thái đang áp dụng (${STATUSES.length})</h3>
+      <div class="note">
+        Cột "Mức phễu" quyết định thứ tự tiến triển (số càng cao = càng cuối, dùng để cảnh báo lỡ tay chọn lùi và xác định trạng thái "hiện tại" của khách hàng). 2 trạng thái có thể cùng mức phễu (VD: Thành công = Thất bại). Nút ▲▼ chỉ đổi thứ tự hiển thị, không đổi mức phễu.
+        Xóa 1 trạng thái không ảnh hưởng dữ liệu cũ đã nhập, chỉ ẩn khỏi các lựa chọn từ nay về sau.
+      </div>
+      <div class="table-scroll"><table><thead><tr><th>Trạng thái</th><th>Mức phễu</th><th>Mã</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+    <div class="card">
+      <h3>➕ Thêm trạng thái mới</h3>
+      <div class="grid4">
+        <div><label>Tên trạng thái</label><input id="ns-label" placeholder="VD: Chờ ký hợp đồng"></div>
+        <div><label>Màu badge</label><input id="ns-color" type="color" value="#0E7C7B" style="height:40px; padding:4px;"></div>
+        <div><label>Mức phễu</label><input id="ns-rank" type="number" value="${STATUSES.length ? Math.max(...STATUSES.map(s=>s.rank))+1 : 1}"></div>
+      </div>
+      <div class="note">Mức phễu: đặt bằng số của 1 trạng thái đã có nếu muốn "ngang hàng" với trạng thái đó (VD: đặt = mức của Thành công/Thất bại nếu đây cũng là 1 kiểu kết thúc). Đặt số cao hơn số lớn nhất hiện có nếu đây là bước cuối cùng, mới nhất.</div>
+      <button class="btn-add" style="margin-top:14px;" onclick="addStatus()">Thêm trạng thái</button>
+    </div>`;
+}
+
+function slugifyStatusKey(label){ return slugifyKey(label); }
+
+async function addStatus(){
+  const label = document.getElementById('ns-label').value.trim();
+  const color = document.getElementById('ns-color').value || '#0E7C7B';
+  const rank = parseInt(document.getElementById('ns-rank').value, 10) || 1;
+  if(!label){ alert('Vui lòng nhập tên trạng thái.'); return; }
+  const key = slugifyStatusKey(label);
+
+  const {data:existing, error:checkErr} = await sb.from('statuses').select('*').eq('key', key).maybeSingle();
+  if(checkErr){ alert('Lỗi khi kiểm tra trạng thái: ' + checkErr.message); return; }
+
+  if(existing){
+    if(existing.active){ alert(`Trạng thái "${label}" đã tồn tại rồi.`); return; }
+    const {error:updErr} = await sb.from('statuses').update({active:true, label, color, rank}).eq('key', key);
+    if(updErr){ alert('Lỗi khi khôi phục trạng thái: ' + updErr.message); return; }
+  } else {
+    const {error:insErr} = await sb.from('statuses').insert([{key, label, color, rank, sort_order:STATUSES.length}]);
+    if(insErr){ alert('Lỗi khi thêm trạng thái: ' + insErr.message); return; }
+  }
+  await loadStatuses();
+  render();
+}
+
+async function removeStatus(key){
+  if(!confirm('Xóa trạng thái này khỏi các lựa chọn? Dữ liệu cũ đã nhập vẫn được giữ lại.')) return;
+  const {error} = await sb.from('statuses').update({active:false}).eq('key', key);
+  if(error){ alert('Lỗi khi xóa trạng thái: ' + error.message); return; }
+  await loadStatuses();
+  render();
+}
+
+async function moveStatus(key, direction){
+  const idx = STATUSES.findIndex(s => s.key === key);
+  const swapIdx = idx + direction;
+  if(idx < 0 || swapIdx < 0 || swapIdx >= STATUSES.length) return;
+  const keyA = STATUSES[idx].key, keyB = STATUSES[swapIdx].key;
+
+  const {data:rows, error:fetchErr} = await sb.from('statuses').select('key,sort_order').in('key', [keyA, keyB]);
+  if(fetchErr || !rows || rows.length < 2){ alert('Lỗi khi đọc thứ tự hiện tại: ' + (fetchErr ? fetchErr.message : 'không tìm thấy dữ liệu')); return; }
+  const orderA = rows.find(r=>r.key===keyA).sort_order;
+  const orderB = rows.find(r=>r.key===keyB).sort_order;
+
+  const {error:err1} = await sb.from('statuses').update({sort_order:orderB}).eq('key', keyA);
+  const {error:err2} = await sb.from('statuses').update({sort_order:orderA}).eq('key', keyB);
+  if(err1 || err2){ alert('Lỗi khi đổi thứ tự: ' + ((err1||err2).message)); return; }
+
+  await loadStatuses();
+  render();
+}
+
 async function addProduct(){
   const label = document.getElementById('np-label').value.trim();
   const unit = document.getElementById('np-unit').value.trim() || 'Triệu đồng';
@@ -852,25 +964,28 @@ async function removeProduct(key){
 
 function renderDirApprovals(){
   if(pendingRequests.length===0){
-    return `<div class="card"><div class="empty">Không có yêu cầu nào đang chờ duyệt làm giám đốc.</div></div>`;
+    return `<div class="card"><div class="empty">Không có yêu cầu nào đang chờ duyệt.</div></div>`;
   }
+  const roleName = r => r==='gd' ? 'Giám đốc' : r==='ql' ? 'Quản lý' : 'Nhân viên';
   const rows = pendingRequests.map(p => `
     <tr>
       <td><b>${p.full_name||'-'}</b></td>
       <td>${p.email||'-'}</td>
       <td>${p.ma_ao||'-'}</td>
+      <td>${roleName(p.requested_role)}</td>
       <td>
-        <button class="btn-sm" onclick="approveGdRequest('${p.id}')">✔️ Duyệt làm giám đốc</button>
+        <button class="btn-sm" onclick="approveRoleRequest('${p.id}', '${p.requested_role||'gd'}')">✔️ Duyệt làm ${roleName(p.requested_role)}</button>
         <button class="btn-sm btn-danger" onclick="rejectGdRequest('${p.id}')">✖️ Từ chối</button>
       </td>
     </tr>`).join('');
-  return `<div class="card"><h3>🕒 Yêu cầu chờ duyệt làm giám đốc (${pendingRequests.length})</h3>
-    <div class="table-scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mã AO</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  return `<div class="card"><h3>🕒 Yêu cầu chờ duyệt (${pendingRequests.length})</h3>
+    <div class="table-scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mã AO</th><th>Xin làm</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
-async function approveGdRequest(id){
-  if(!confirm('Duyệt tài khoản này thành Giám đốc? Người này sẽ xem được toàn bộ dữ liệu chi nhánh.')) return;
-  const {error} = await sb.from('profiles').update({role:'gd', gd_request_status:'approved'}).eq('id', id);
+async function approveRoleRequest(id, requestedRole){
+  const roleName = requestedRole==='gd' ? 'Giám đốc' : 'Quản lý';
+  if(!confirm(`Duyệt tài khoản này thành ${roleName}? Người này sẽ xem được toàn bộ dữ liệu chi nhánh.`)) return;
+  const {error} = await sb.from('profiles').update({role:requestedRole, gd_request_status:'approved'}).eq('id', id);
   if(error){ alert('Lỗi khi duyệt: ' + error.message); return; }
   await loadPendingRequests();
   render();
@@ -883,10 +998,75 @@ async function rejectGdRequest(id){
   render();
 }
 
+function renderDirUsers(){
+  const renderRow = u => `
+    <tr>
+      <td><b>${u.full_name||'-'}</b></td>
+      <td>${u.email||'-'}</td>
+      <td style="text-align:center;">${u.ma_ao||'-'}</td>
+      <td style="text-align:center;">${u.active===false ? '<span class="badge" style="background:#C0392B;">Đã vô hiệu hóa</span>' : '<span class="badge" style="background:#1E8E5A;">Đang hoạt động</span>'}</td>
+      <td style="text-align:center; white-space:nowrap;">
+        ${u.id === session.user.id
+          ? `<span style="font-size:11.5px; color:var(--text-soft);">(Tài khoản của anh)</span>`
+          : `
+            ${u.active===false
+              ? `<button class="btn-sm" onclick="toggleUserActive('${u.id}', true)">✔️ Kích hoạt lại</button>`
+              : `<button class="btn-sm btn-danger" onclick="toggleUserActive('${u.id}', false)">🚫 Vô hiệu hóa</button>`
+            }
+            <button class="btn-sm btn-danger" onclick="deleteUserProfile('${u.id}')">🗑️ Xóa</button>
+          `
+        }
+      </td>
+    </tr>`;
+
+  const groups = [
+    {key:'gd', label:'🏦 Giám đốc'},
+    {key:'ql', label:'🧭 Quản lý'},
+    {key:'nv', label:'👤 Nhân viên'}
+  ];
+
+  const sections = groups.map(g => {
+    const users = allUsers.filter(u => u.role === g.key);
+    if(users.length === 0) return '';
+    return `
+      <div class="card">
+        <h3>${g.label} (${users.length})</h3>
+        <div class="table-scroll"><table style="table-layout:fixed; width:100%;">
+          <colgroup><col style="width:22%"><col style="width:26%"><col style="width:14%"><col style="width:16%"><col style="width:22%"></colgroup>
+          <thead><tr><th>Họ tên</th><th>Email</th><th style="text-align:center;">Mã AO</th><th style="text-align:center;">Trạng thái</th><th style="text-align:center;"></th></tr></thead>
+          <tbody>${users.map(renderRow).join('')}</tbody></table></div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="note" style="margin-bottom:16px;">Vô hiệu hóa sẽ chặn người đó đăng nhập ngay lập tức (dữ liệu khách hàng vẫn giữ nguyên). Xóa sẽ gỡ hồ sơ khỏi danh sách này, nhưng không thu hồi quyền đăng nhập thật - nếu người đó đăng nhập lại, hệ thống sẽ tự tạo hồ sơ nhân viên mới cho họ.</div>
+    ${sections || `<div class="card"><div class="empty">Chưa có người dùng nào.</div></div>`}`;
+}
+
+async function deleteUserProfile(id){
+  if(!confirm('Xóa hồ sơ người dùng này khỏi danh sách? Lưu ý: không thu hồi được quyền đăng nhập thật của họ, chỉ nên dùng khi chắc chắn không cần theo dõi người này nữa. Nếu muốn chặn đăng nhập, hãy dùng "Vô hiệu hóa" thay vì Xóa.')) return;
+  const {error} = await sb.from('profiles').delete().eq('id', id);
+  if(error){ alert('Lỗi khi xóa: ' + error.message); return; }
+  await loadAllUsers();
+  render();
+}
+
+async function toggleUserActive(id, makeActive){
+  const msg = makeActive ? 'Kích hoạt lại tài khoản này?' : 'Vô hiệu hóa tài khoản này? Người đó sẽ không đăng nhập được nữa.';
+  if(!confirm(msg)) return;
+  const {error} = await sb.from('profiles').update({active:makeActive}).eq('id', id);
+  if(error){ alert('Lỗi: ' + error.message); return; }
+  await loadAllUsers();
+  render();
+}
+
 async function setDirTab(t){
+  if((t === 'approvals' || t === 'products' || t === 'users' || t === 'statuses') && session.profile.role !== 'gd') return;
   dirTab = t;
   if(t === 'approvals') await loadPendingRequests();
   if(t === 'products') await loadProducts();
+  if(t === 'users') await loadAllUsers();
+  if(t === 'statuses') await loadStatuses();
   render();
 }
 function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(Boolean))].sort(); }
@@ -1029,7 +1209,7 @@ function renderDirSummary(){
 
   const rows = latest.map(r => `<tr>
     <td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
-    <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+    <td><span class="badge" style="background:${STATUS_COLORS[r.trangThai]||'#888'}">${r.trangThai||'-'}</span></td>
     ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
   </tr>`).join('');
 
@@ -1045,7 +1225,7 @@ function renderDirHistory(){
   const filtered = applyFilters(records).sort((a,b)=> compareByDate(b,a));
   const rows = filtered.map(r => `<tr>
     <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
-    <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
+    <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge" style="background:${STATUS_COLORS[r.trangThai]||'#888'}">${r.trangThai||'-'}</span></td>
     ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
   </tr>`).join('');
   return `<div class="card"><h3>🗂️ Toàn bộ lịch sử cập nhật (${filtered.length} / ${records.length})</h3>${renderFilterBar()}
