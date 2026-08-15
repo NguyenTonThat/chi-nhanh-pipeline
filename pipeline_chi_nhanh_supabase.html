@@ -570,7 +570,7 @@ let chartStatusFilter = new Set(["Thành công"]); // mặc định biểu đồ
 
 function toggleChartStatus(status, checked){
   if(checked) chartStatusFilter.add(status); else chartStatusFilter.delete(status);
-  drawDirCharts();
+  render();
 }
 
 function drawDirCharts(){
@@ -850,8 +850,11 @@ function renderDirSummary(){
       </div>
     </div>`;
 
-  const productTotals = `<div class="card"><h3>💰 Tổng Pipeline theo sản phẩm (trạng thái mới nhất mỗi KH)</h3>
-    <div class="grid4">${PRODUCTS.map(p=>`<div class="stat"><div class="num">${totalPipeline[p.key].toLocaleString('vi-VN')}</div><div class="lbl">${p.label}</div></div>`).join('')}</div></div>`;
+  const productTotals = `<div class="card"><h3>💰 Tổng Pipeline theo sản phẩm (theo trạng thái đang chọn ở trên)</h3>
+    <div class="grid4">${PRODUCTS.map(p=>{
+      const sum = [...chartStatusFilter].reduce((acc,s)=> acc + (totalPipelineByStatus[s] ? totalPipelineByStatus[s][p.key] : 0), 0);
+      return `<div class="stat"><div class="num">${sum.toLocaleString('vi-VN')}</div><div class="lbl">${p.label}</div></div>`;
+    }).join('')}</div></div>`;
 
   const rows = latest.map(r => `<tr>
     <td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
