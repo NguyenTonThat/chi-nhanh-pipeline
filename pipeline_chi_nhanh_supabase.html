@@ -186,7 +186,7 @@ async function hydrateSession(user){
     // Hồ sơ bị thiếu (VD: đăng ký lúc còn bật xác nhận email) -> tự tạo hồ sơ mặc định là nhân viên
     const defaultName = (user.email || '').split('@')[0];
     const {data:created, error:createErr} = await sb.from('profiles')
-      .insert([{id:user.id, full_name:defaultName, role:'nv', ma_ao:null}])
+      .insert([{id:user.id, full_name:defaultName, role:'nv', ma_ao:null, email:user.email||null}])
       .select().single();
     if(createErr || !created){
       authError = "Không tìm thấy/khởi tạo được hồ sơ người dùng. Vui lòng báo quản trị viên kiểm tra bảng profiles.";
@@ -197,6 +197,7 @@ async function hydrateSession(user){
   }
   session = {user, profile};
   await loadRecords();
+  if(profile.role === 'gd') await loadPendingRequests();
 }
 
 function render(){
@@ -243,6 +244,11 @@ function renderLogin(){
         <input id="reg-email" type="email" placeholder="ten@chinhanh.vn">
         <label>Mật khẩu</label>
         <input id="reg-pass" type="password" placeholder="Tối thiểu 6 ký tự">
+        <label>Vai trò mong muốn</label>
+        <select id="reg-role">
+          <option value="nv">Nhân viên</option>
+          <option value="gd">Giám đốc (cần được duyệt)</option>
+        </select>
         <button class="btn-primary" onclick="doRegister()">Đăng ký</button>
       `}
       <div id="auth-msg">${authNotice ? `<div class="hint">${authNotice}</div>` : ''}</div>
@@ -264,18 +270,24 @@ async function doRegister(){
   const maAO = document.getElementById('reg-maAO').value.trim();
   const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-pass').value;
+  const wantsGd = document.getElementById('reg-role').value === 'gd';
   if(!hoTen || !email || !password){ showAuthMessage('Vui lòng điền đầy đủ Họ tên, Email và Mật khẩu.', true); return; }
   if(password.length < 6){ showAuthMessage('Mật khẩu phải từ 6 ký tự trở lên.', true); return; }
   const {data, error} = await sb.auth.signUp({email, password});
   if(error){ showAuthMessage('Lỗi đăng ký: ' + error.message, true); return; }
 
   if(data.session && data.user){
+    // Tài khoản LUÔN tạo với quyền nhân viên trước; nếu chọn "Giám đốc" thì chỉ ghi nhận
+    // yêu cầu chờ duyệt (gd_request_status = 'pending'), chưa được cấp quyền ngay.
     const {error:profErr} = await sb.from('profiles').insert([
-      {id:data.user.id, full_name:hoTen, role:'nv', ma_ao:maAO}
+      {id:data.user.id, full_name:hoTen, role:'nv', ma_ao:maAO, email,
+       gd_request_status: wantsGd ? 'pending' : null}
     ]);
     if(profErr){ showAuthMessage('Tạo tài khoản thành công nhưng lỗi khi lưu hồ sơ: ' + profErr.message, true); return; }
     await sb.auth.signOut();
-    authNotice = "Đăng ký thành công! Vui lòng đăng nhập bằng email và mật khẩu vừa tạo.";
+    authNotice = wantsGd
+      ? "Đăng ký thành công! Yêu cầu làm giám đốc đang chờ duyệt — trong lúc chờ, hãy đăng nhập bằng quyền nhân viên."
+      : "Đăng ký thành công! Vui lòng đăng nhập bằng email và mật khẩu vừa tạo.";
     loginMode = 'login';
     render();
   } else {
@@ -616,15 +628,61 @@ function drawDirCharts(){
   }
 }
 
+let pendingRequests = [];
+
+async function loadPendingRequests(){
+  const {data, error} = await sb.from('profiles').select('*').eq('gd_request_status','pending');
+  pendingRequests = error ? [] : data;
+}
+
 function renderDirector(){
   return `
     <div class="tabs">
       <button class="${dirTab==='summary'?'active':''}" onclick="setDirTab('summary')">Tình hình hiện tại theo KH</button>
       <button class="${dirTab==='history'?'active':''}" onclick="setDirTab('history')">Toàn bộ lịch sử cập nhật</button>
+      <button class="${dirTab==='approvals'?'active':''}" onclick="setDirTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
     </div>
-    ${dirTab==='summary' ? renderDirSummary() : renderDirHistory()}`;
+    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : renderDirApprovals()}`;
 }
-function setDirTab(t){ dirTab=t; render(); }
+
+function renderDirApprovals(){
+  if(pendingRequests.length===0){
+    return `<div class="card"><div class="empty">Không có yêu cầu nào đang chờ duyệt làm giám đốc.</div></div>`;
+  }
+  const rows = pendingRequests.map(p => `
+    <tr>
+      <td><b>${p.full_name||'-'}</b></td>
+      <td>${p.email||'-'}</td>
+      <td>${p.ma_ao||'-'}</td>
+      <td>
+        <button class="btn-sm" onclick="approveGdRequest('${p.id}')">✔️ Duyệt làm giám đốc</button>
+        <button class="btn-sm btn-danger" onclick="rejectGdRequest('${p.id}')">✖️ Từ chối</button>
+      </td>
+    </tr>`).join('');
+  return `<div class="card"><h3>🕒 Yêu cầu chờ duyệt làm giám đốc (${pendingRequests.length})</h3>
+    <div class="table-scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mã AO</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+async function approveGdRequest(id){
+  if(!confirm('Duyệt tài khoản này thành Giám đốc? Người này sẽ xem được toàn bộ dữ liệu chi nhánh.')) return;
+  const {error} = await sb.from('profiles').update({role:'gd', gd_request_status:'approved'}).eq('id', id);
+  if(error){ alert('Lỗi khi duyệt: ' + error.message); return; }
+  await loadPendingRequests();
+  render();
+}
+async function rejectGdRequest(id){
+  if(!confirm('Từ chối yêu cầu này? Người này vẫn giữ quyền nhân viên.')) return;
+  const {error} = await sb.from('profiles').update({gd_request_status:'rejected'}).eq('id', id);
+  if(error){ alert('Lỗi khi từ chối: ' + error.message); return; }
+  await loadPendingRequests();
+  render();
+}
+
+async function setDirTab(t){
+  dirTab = t;
+  if(t === 'approvals') await loadPendingRequests();
+  render();
+}
 function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(Boolean))].sort(); }
 
 // Trích phần "(từ ... đến ...)" từ chuỗi "Tuần N (từ ... đến ...)" -> dùng để lọc theo tuần lịch
