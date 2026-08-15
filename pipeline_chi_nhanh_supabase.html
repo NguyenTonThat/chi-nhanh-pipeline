@@ -128,18 +128,18 @@ const SUPABASE_ANON_KEY = "sb_publishable_nfU66O7jMnOWZLtW0K7XFw_8-ZLU-kW";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Đang xử lý","Thành công","Thất bại"];
+const STATUS_LIST = ["Tiềm năng","Liên hệ","Tư vấn","Đàm phán","Thành công","Thất bại","Đang xử lý"];
 // Thứ tự tiến triển của phễu: Thành công/Thất bại là 2 trạng thái cuối cùng (cùng mức, đã kết thúc)
-const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Đang xử lý":5, "Thành công":6, "Thất bại":6};
+const STATUS_RANK = {"Tiềm năng":1, "Liên hệ":2, "Tư vấn":3, "Đàm phán":4, "Thành công":5, "Thất bại":5, "Đang xử lý":6};
 const STATUS_CLASS = {"Tiềm năng":"b-tiemnang","Liên hệ":"b-lienhe","Tư vấn":"b-tuvan","Đàm phán":"b-damphan","Đang xử lý":"b-dangxuly","Thành công":"b-thanhcong","Thất bại":"b-thatbai"};
 const STATUS_COLORS = {"Tiềm năng":"#2563A8","Liên hệ":"#0E8FA1","Tư vấn":"#B8860B","Đàm phán":"#D97706","Đang xử lý":"#6D4AA8","Thành công":"#1E8E5A","Thất bại":"#C0392B"};
 let chartInstances = {};
-const PRODUCTS = [
-  {key:"choVay", db:"cho_vay", label:"Cho vay"}, {key:"huyDong", db:"huy_dong", label:"Huy động"},
-  {key:"the", db:"the", label:"Thẻ"}, {key:"bhnt", db:"bhnt", label:"BHNT"},
-  {key:"bhpnt", db:"bhpnt", label:"BHPNT"}, {key:"kdhn", db:"kdhn", label:"KDHN"},
-  {key:"traiPhieu", db:"trai_phieu", label:"Trái phiếu"}, {key:"tkHDT", db:"tk_hdt", label:"TK HĐT"}
-];
+let PRODUCTS = []; // nạp động từ bảng "products" trong Supabase - giám đốc thêm/bớt được
+
+async function loadProducts(){
+  const {data, error} = await sb.from('products').select('*').eq('active', true).order('sort_order');
+  PRODUCTS = error ? [] : data.map(p => ({key:p.key, label:p.label, unit:p.unit}));
+}
 
 let session = null;   // {user, profile:{full_name, role, ma_ao}}
 let records = [];
@@ -151,7 +151,8 @@ function fromDb(row){
     cccd:row.cccd, sdt:row.sdt, ngheNghiep:row.nghe_nghiep, donVi:row.don_vi, tuan:row.tuan,
     ngayUpdate:row.ngay_update, trangThai:row.trang_thai, ghiChu:row.ghi_chu, updatedAt:row.updated_at
   };
-  PRODUCTS.forEach(p => rec[p.key] = row[p.db]);
+  const vals = row.pipeline_values || {};
+  PRODUCTS.forEach(p => rec[p.key] = vals[p.key] ?? 0);
   return rec;
 }
 function toDb(rec){
@@ -160,8 +161,47 @@ function toDb(rec){
     nghe_nghiep:rec.ngheNghiep, don_vi:rec.donVi, tuan:rec.tuan, ngay_update:rec.ngayUpdate || null,
     trang_thai:rec.trangThai, ghi_chu:rec.ghiChu || null, updated_at:new Date().toISOString()
   };
-  PRODUCTS.forEach(p => row[p.db] = rec[p.key]);
+  const vals = {};
+  PRODUCTS.forEach(p => vals[p.key] = rec[p.key] || 0);
+  row.pipeline_values = vals;
   return row;
+}
+
+function showTenKHSuggestions(){
+  // Gom danh sách khách hàng duy nhất (theo CCCD nếu có, không thì theo tên), lấy bản ghi mới nhất của mỗi người
+  const uniqueCustomers = new Map();
+  [...records].sort((a,b)=> compareRecency(a,b)).forEach(r=>{
+    const key = (r.cccd && r.cccd.trim()) ? r.cccd.trim() : r.tenKH.trim().toLowerCase();
+    uniqueCustomers.set(key, r);
+  });
+  const kw = (document.getElementById('f-tenKH').value || '').trim().toLowerCase();
+  // Gõ đúng y hệt 1 khách hàng đã chọn thì vẫn hiện toàn bộ danh sách để đổi sang người khác được
+  const list = [...uniqueCustomers.values()].filter(r=>{
+    if(!kw) return true;
+    if(r.tenKH.trim().toLowerCase() === kw) return true;
+    return `${r.tenKH} ${r.cccd||''} ${r.sdt||''}`.toLowerCase().includes(kw);
+  }).sort((a,b)=> a.tenKH.localeCompare(b.tenKH));
+
+  const box = document.getElementById('tenKH-suggestions');
+  if(!box) return;
+  if(list.length===0){ box.style.display = 'none'; return; }
+  box.innerHTML = list.map(r => `
+    <div style="padding:9px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:13px;"
+      onmousedown="pickTenKHSuggestion('${r.id}')">
+      <b>${r.tenKH}</b>
+      <div style="font-size:11px; color:var(--text-soft);">${r.cccd || '(không có CCCD)'} ${r.sdt ? '· '+r.sdt : ''}</div>
+    </div>`).join('');
+  box.style.display = 'block';
+}
+function hideTenKHSuggestions(){
+  const box = document.getElementById('tenKH-suggestions');
+  if(box) box.style.display = 'none';
+}
+function pickTenKHSuggestion(recordId){
+  const r = records.find(x=>x.id===recordId);
+  if(!r) return;
+  fillFromMatch(r);
+  hideTenKHSuggestions();
 }
 
 function showCustomerNote(recordId){
@@ -185,6 +225,7 @@ async function loadRecords(){
 }
 
 async function checkExistingSession(){
+  await loadProducts();
   const {data:{session:s}} = await sb.auth.getSession();
   if(s){ await hydrateSession(s.user); }
   render();
@@ -443,7 +484,7 @@ function todayStr(){ return new Date().toISOString().slice(0,10); }
 function renderForm(){
   const r = editingId ? records.find(x=>x.id===editingId) : null;
   const v = (f, d='') => r ? (r[f] ?? d) : d;
-  const productRows = PRODUCTS.map(p => `<div><label>${p.label}</label><input type="number" step="any" id="f-${p.key}" value="${v(p.key,'')}" placeholder="0"></div>`).join('');
+  const productRows = PRODUCTS.map(p => `<div><label>${p.label} <span style="font-weight:400; color:var(--text-soft);">(${p.unit})</span></label><input type="number" step="any" id="f-${p.key}" value="${v(p.key,'')}" placeholder="0"></div>`).join('');
   const statusOptions = STATUS_LIST.map(s=>`<option value="${s}" ${v('trangThai','Tiềm năng')===s?'selected':''}>${s}</option>`).join('');
   const idx = buildCustomerIndex();
   const nameOptions = [...idx.nameGroups.entries()].map(([key,group])=>`<option value="${[...group.values()][0].tenKH}">`).join('');
@@ -454,7 +495,12 @@ function renderForm(){
     <div class="grid4">
       <div><label>Mã AO</label><input id="f-maAO" value="${v('maAO', session.profile.ma_ao||'')}"></div>
       <div><label>Tên nhân viên</label><input id="f-tenNV" value="${v('tenNhanVien', session.profile.full_name)}"></div>
-      <div><label>Tên khách hàng</label><input id="f-tenKH" list="dl-ten-kh" value="${v('tenKH')}" onchange="autofillCustomer('tenKH')"></div>
+      <div style="position:relative;"><label>Tên khách hàng</label>
+        <input id="f-tenKH" value="${v('tenKH')}" autocomplete="off"
+          onfocus="showTenKHSuggestions()" oninput="showTenKHSuggestions()"
+          onblur="setTimeout(function(){ hideTenKHSuggestions(); autofillCustomer('tenKH'); }, 200)">
+        <div id="tenKH-suggestions" style="display:none; position:absolute; top:100%; left:0; right:0; z-index:50; background:#fff; border:1.5px solid var(--teal); border-top:none; border-radius:0 0 8px 8px; max-height:220px; overflow-y:auto; box-shadow:0 8px 20px rgba(16,38,63,0.15);"></div>
+      </div>
       <div><label>CCCD</label><input id="f-cccd" list="dl-cccd" value="${v('cccd')}" onchange="autofillCustomer('cccd')"></div>
       <div><label>Số điện thoại</label><input id="f-sdt" value="${v('sdt')}"></div>
       <div><label>Nghề nghiệp</label><input id="f-ngheNghiep" value="${v('ngheNghiep')}"></div>
@@ -473,7 +519,7 @@ function renderForm(){
       <label>Ghi chú / diễn giải</label>
       <textarea id="f-ghiChu" rows="2" placeholder="VD: Khách hẹn gọi lại tuần sau, đang cân nhắc lãi suất..." style="width:100%; padding:9px 11px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical;">${v('ghiChu')}</textarea>
     </div>
-    <div class="section-label">Pipeline tuần (Trđ / Thẻ)</div>
+    <div class="section-label">Pipeline tuần theo chỉ tiêu</div>
     <div class="grid4">${productRows}</div>
     <div style="display:flex; gap:10px; margin-top:20px;">
       <button class="btn-add" onclick="submitForm()">${editingId? 'Lưu cập nhật' : 'Thêm bản ghi'}</button>
@@ -504,12 +550,12 @@ async function submitForm(){
   };
 
   // Chặn lỡ tay chọn ngược trạng thái (VD: đang Đàm phán mà ghi nhầm về Liên hệ).
-  // Cho phép quay lại "Tiềm năng" nếu mức cao nhất trước đó đã Thành công/Thất bại (bắt đầu đợt mới).
+  // Cho phép quay lại "Tiềm năng" nếu mức cao nhất trước đó đã "Đang xử lý" (đã khép lại đợt tiếp cận, bắt đầu đợt mới).
   const highest = getCustomerHighestStatus(tenKH, rec.cccd, editingId);
   if(highest){
     const highestRank = STATUS_RANK[highest.trangThai] || 0;
     const newRank = STATUS_RANK[rec.trangThai] || 0;
-    const highestIsTerminal = highestRank === 5;
+    const highestIsTerminal = highestRank === STATUS_RANK["Đang xử lý"];
     if(!highestIsTerminal && newRank < highestRank){
       const ok = confirm(
         `⚠️ Khách hàng "${tenKH}" đã từng đạt trạng thái "${highest.trangThai}" (cao hơn).\n` +
@@ -544,11 +590,11 @@ function renderEmployeeTable(mine){
     <tr>
       <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
       <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
-      <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td>
+      ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
       <td><button class="btn-sm" onclick="startEdit('${r.id}')">Sửa</button> <button class="btn-sm btn-danger" onclick="deleteRecord('${r.id}')">Xóa</button></td>
     </tr>`).join('');
   return `<div class="table-scroll"><table><thead><tr>
-      <th>Tuần</th><th>Ngày update</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Trạng thái</th><th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th></th>
+      <th>Tuần</th><th>Ngày update</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Trạng thái</th>${PRODUCTS.map(p=>`<th>${p.label}</th>`).join('')}<th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -616,44 +662,30 @@ function drawDirCharts(){
 
   const selectedStatuses = STATUS_LIST.filter(s => chartStatusFilter.has(s));
 
-  const elProductMoney = document.getElementById('chart-product-money');
-  if(elProductMoney){
-    const moneyProducts = PRODUCTS.filter(p => p.key !== 'the');
+  // Nhóm chỉ tiêu theo đơn vị -> mỗi đơn vị vẽ 1 biểu đồ riêng (tự thích ứng khi giám đốc thêm/bớt chỉ tiêu)
+  const unitGroups = new Map();
+  PRODUCTS.forEach(p=>{
+    if(!unitGroups.has(p.unit)) unitGroups.set(p.unit, []);
+    unitGroups.get(p.unit).push(p);
+  });
+  [...unitGroups.entries()].forEach(([unit, productsInUnit], idx)=>{
+    const el = document.getElementById(`chart-product-unit-${idx}`);
+    if(!el) return;
     const datasets = selectedStatuses.map(s => ({
       label: s,
-      data: moneyProducts.map(p => totalPipelineByStatus[s][p.key]),
+      data: productsInUnit.map(p => (totalPipelineByStatus[s] ? totalPipelineByStatus[s][p.key] : 0)),
       backgroundColor: STATUS_COLORS[s]
     }));
-    chartInstances.productMoney = new Chart(elProductMoney, {
+    chartInstances['unit'+idx] = new Chart(el, {
       type:'bar',
-      data:{ labels:moneyProducts.map(p=>p.label), datasets },
+      data:{ labels:productsInUnit.map(p=>p.label), datasets },
       options:{
         maintainAspectRatio:false,
         plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}},
-        scales:{ x:{stacked:true}, y:{stacked:true, beginAtZero:true} }
+        scales:{ x:{stacked:true}, y:{stacked:true, beginAtZero:true, ticks: unit==='Triệu đồng' ? {} : {stepSize:1}} }
       }
     });
-  }
-  const elProductCard = document.getElementById('chart-product-card');
-  if(elProductCard){
-    const cardProduct = PRODUCTS.find(p => p.key === 'the');
-    chartInstances.productCard = new Chart(elProductCard, {
-      type:'bar',
-      data:{
-        labels:['Thẻ'],
-        datasets: selectedStatuses.map(s => ({
-          label: s,
-          data: [totalPipelineByStatus[s][cardProduct.key]],
-          backgroundColor: STATUS_COLORS[s]
-        }))
-      },
-      options:{
-        maintainAspectRatio:false,
-        plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}},
-        scales:{ x:{stacked:true}, y:{stacked:true, beginAtZero:true, ticks:{stepSize:1}} }
-      }
-    });
-  }
+  });
   const elEmp = document.getElementById('chart-employee');
   if(elEmp){
     const names = Object.keys(byEmployee);
@@ -684,8 +716,104 @@ function renderDirector(){
       <button class="${dirTab==='summary'?'active':''}" onclick="setDirTab('summary')">Tình hình hiện tại theo KH</button>
       <button class="${dirTab==='history'?'active':''}" onclick="setDirTab('history')">Toàn bộ lịch sử cập nhật</button>
       <button class="${dirTab==='approvals'?'active':''}" onclick="setDirTab('approvals')">Duyệt yêu cầu${pendingRequests.length ? ` (${pendingRequests.length})` : ''}</button>
+      <button class="${dirTab==='products'?'active':''}" onclick="setDirTab('products')">Quản lý chỉ tiêu</button>
     </div>
-    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : renderDirApprovals()}`;
+    ${dirTab==='summary' ? renderDirSummary() : dirTab==='history' ? renderDirHistory() : dirTab==='approvals' ? renderDirApprovals() : renderDirProducts()}`;
+}
+
+function renderDirProducts(){
+  const rows = PRODUCTS.map((p,i) => `
+    <tr>
+      <td><b>${p.label}</b></td>
+      <td>${p.unit}</td>
+      <td><code>${p.key}</code></td>
+      <td>
+        <button class="btn-sm" onclick="moveProduct('${p.key}', -1)" ${i===0?'disabled':''} title="Chuyển lên">▲</button>
+        <button class="btn-sm" onclick="moveProduct('${p.key}', 1)" ${i===PRODUCTS.length-1?'disabled':''} title="Chuyển xuống">▼</button>
+        <button class="btn-sm btn-danger" onclick="removeProduct('${p.key}')">✖️ Xóa</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <div class="card">
+      <h3>🧩 Chỉ tiêu đang áp dụng (${PRODUCTS.length})</h3>
+      <div class="note">Dùng nút ▲▼ để đổi thứ tự — thứ tự này sẽ áp dụng đồng bộ ở form nhập, các bảng và biểu đồ. Xóa 1 chỉ tiêu không xóa dữ liệu cũ đã nhập cho chỉ tiêu đó — chỉ ẩn nó khỏi form nhập và biểu đồ từ nay về sau. Phù hợp khi chỉ tiêu thay đổi theo từng thời kỳ (quý/năm).</div>
+      <div class="table-scroll"><table><thead><tr><th>Tên chỉ tiêu</th><th>Đơn vị</th><th>Mã</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+    <div class="card">
+      <h3>➕ Thêm chỉ tiêu mới</h3>
+      <div class="grid4">
+        <div><label>Tên chỉ tiêu</label><input id="np-label" placeholder="VD: Bảo hiểm sức khỏe"></div>
+        <div><label>Đơn vị</label><input id="np-unit" list="dl-units" placeholder="VD: Triệu đồng / Hợp đồng"></div>
+      </div>
+      <datalist id="dl-units">${[...new Set(PRODUCTS.map(p=>p.unit))].map(u=>`<option value="${u}">`).join('')}</datalist>
+      <button class="btn-add" style="margin-top:14px;" onclick="addProduct()">Thêm chỉ tiêu</button>
+    </div>`;
+}
+
+function slugifyKey(label){
+  const map = {'à':'a','á':'a','ả':'a','ã':'a','ạ':'a','ă':'a','ằ':'a','ắ':'a','ẳ':'a','ẵ':'a','ặ':'a','â':'a','ầ':'a','ấ':'a','ẩ':'a','ẫ':'a','ậ':'a',
+    'đ':'d','è':'e','é':'e','ẻ':'e','ẽ':'e','ẹ':'e','ê':'e','ề':'e','ế':'e','ể':'e','ễ':'e','ệ':'e',
+    'ì':'i','í':'i','ỉ':'i','ĩ':'i','ị':'i','ò':'o','ó':'o','ỏ':'o','õ':'o','ọ':'o','ô':'o','ồ':'o','ố':'o','ổ':'o','ỗ':'o','ộ':'o','ơ':'o','ờ':'o','ớ':'o','ở':'o','ỡ':'o','ợ':'o',
+    'ù':'u','ú':'u','ủ':'u','ũ':'u','ụ':'u','ư':'u','ừ':'u','ứ':'u','ử':'u','ữ':'u','ự':'u','ỳ':'y','ý':'y','ỷ':'y','ỹ':'y','ỵ':'y'};
+  const lower = label.trim().toLowerCase().split('').map(ch=>map[ch]||ch).join('');
+  return lower.replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('chi_tieu_'+Date.now());
+}
+
+async function moveProduct(key, direction){
+  const idx = PRODUCTS.findIndex(p => p.key === key);
+  const swapIdx = idx + direction;
+  if(idx < 0 || swapIdx < 0 || swapIdx >= PRODUCTS.length) return;
+  const keyA = PRODUCTS[idx].key, keyB = PRODUCTS[swapIdx].key;
+
+  const {data:rows, error:fetchErr} = await sb.from('products').select('key,sort_order').in('key', [keyA, keyB]);
+  if(fetchErr || !rows || rows.length < 2){ alert('Lỗi khi đọc thứ tự hiện tại: ' + (fetchErr ? fetchErr.message : 'không tìm thấy dữ liệu')); return; }
+  const orderA = rows.find(r=>r.key===keyA).sort_order;
+  const orderB = rows.find(r=>r.key===keyB).sort_order;
+
+  const {error:err1} = await sb.from('products').update({sort_order:orderB}).eq('key', keyA);
+  const {error:err2} = await sb.from('products').update({sort_order:orderA}).eq('key', keyB);
+  if(err1 || err2){ alert('Lỗi khi đổi thứ tự: ' + ((err1||err2).message)); return; }
+
+  await loadProducts();
+  await loadRecords();
+  render();
+}
+
+async function addProduct(){
+  const label = document.getElementById('np-label').value.trim();
+  const unit = document.getElementById('np-unit').value.trim() || 'Triệu đồng';
+  if(!label){ alert('Vui lòng nhập tên chỉ tiêu.'); return; }
+  const key = slugifyKey(label);
+
+  // Kiểm tra xem mã này đã từng tồn tại chưa (kể cả đã bị ẩn trước đó)
+  const {data:existing, error:checkErr} = await sb.from('products').select('*').eq('key', key).maybeSingle();
+  if(checkErr){ alert('Lỗi khi kiểm tra chỉ tiêu: ' + checkErr.message); return; }
+
+  if(existing){
+    if(existing.active){
+      alert(`Chỉ tiêu "${label}" đã tồn tại rồi, không cần thêm lại.`);
+      return;
+    }
+    // Đã có nhưng đang bị ẩn -> kích hoạt lại (tránh tạo trùng mã, vẫn giữ dữ liệu cũ đã nhập)
+    const {error:updErr} = await sb.from('products').update({active:true, label, unit}).eq('key', key);
+    if(updErr){ alert('Lỗi khi khôi phục chỉ tiêu: ' + updErr.message); return; }
+  } else {
+    const maxOrder = PRODUCTS.length;
+    const {error:insErr} = await sb.from('products').insert([{key, label, unit, sort_order:maxOrder}]);
+    if(insErr){ alert('Lỗi khi thêm chỉ tiêu: ' + insErr.message); return; }
+  }
+  await loadProducts();
+  await loadRecords();
+  render();
+}
+
+async function removeProduct(key){
+  if(!confirm('Xóa chỉ tiêu này khỏi form nhập/biểu đồ? Dữ liệu cũ đã nhập vẫn được giữ lại.')) return;
+  const {error} = await sb.from('products').update({active:false}).eq('key', key);
+  if(error){ alert('Lỗi khi xóa chỉ tiêu: ' + error.message); return; }
+  await loadProducts();
+  await loadRecords();
+  render();
 }
 
 function renderDirApprovals(){
@@ -724,6 +852,7 @@ async function rejectGdRequest(id){
 async function setDirTab(t){
   dirTab = t;
   if(t === 'approvals') await loadPendingRequests();
+  if(t === 'products') await loadProducts();
   render();
 }
 function uniqueVals(field){ return [...new Set(records.map(r=>r[field]).filter(Boolean))].sort(); }
@@ -829,6 +958,15 @@ function renderDirSummary(){
     ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
   </div>`;
 
+  const unitGroupsForRender = new Map();
+  PRODUCTS.forEach(p=>{
+    if(!unitGroupsForRender.has(p.unit)) unitGroupsForRender.set(p.unit, []);
+    unitGroupsForRender.get(p.unit).push(p);
+  });
+  const unitChartBoxes = [...unitGroupsForRender.keys()].map((unit, idx) => `
+    <div class="chart-box"><h4>Pipeline theo sản phẩm, theo trạng thái (${unit})</h4><div class="chart-canvas-wrap wide"><canvas id="chart-product-unit-${idx}"></canvas></div></div>
+  `).join('');
+
   const chartsSection = `
     <div class="card">
       <h3>📊 Biểu đồ tổng quan</h3>
@@ -845,8 +983,7 @@ function renderDirSummary(){
           </label>`).join('')}
       </div>
       <div class="charts-grid" style="margin-top:12px;">
-        <div class="chart-box"><h4>Pipeline theo sản phẩm, theo trạng thái (Triệu đồng)</h4><div class="chart-canvas-wrap wide"><canvas id="chart-product-money"></canvas></div></div>
-        <div class="chart-box"><h4>Số lượng Thẻ, theo trạng thái</h4><div class="chart-canvas-wrap wide"><canvas id="chart-product-card"></canvas></div></div>
+        ${unitChartBoxes}
       </div>
     </div>`;
 
@@ -859,14 +996,14 @@ function renderDirSummary(){
   const rows = latest.map(r => `<tr>
     <td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.tenNhanVien}</td><td>${r.maAO||'-'}</td><td>${r.sdt||'-'}</td><td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td>
     <td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
-    <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
+    ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
   </tr>`).join('');
 
   return `${statCards}${chartsSection}${productTotals}<div class="card"><h3>📌 Tóm tắt tình hình hiện tại theo từng khách hàng (${latest.length})</h3>${renderFilterBar()}
     <div class="table-scroll"><table><thead><tr>
       <th>Tên KH</th><th>Nhân viên</th><th>Mã AO</th><th>SĐT</th><th>Tuần</th><th>Ngày update</th><th>Trạng thái</th>
-      <th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th>BHPNT</th><th>KDHN</th><th>Trái phiếu</th><th>TK HĐT</th>
-    </tr></thead><tbody>${rows || `<tr><td colspan="15" class="empty">Không có bản ghi phù hợp bộ lọc.</td></tr>`}</tbody></table></div></div>`;
+      ${PRODUCTS.map(p=>`<th>${p.label}</th>`).join('')}
+    </tr></thead><tbody>${rows || `<tr><td colspan="${7+PRODUCTS.length}" class="empty">Không có bản ghi phù hợp bộ lọc.</td></tr>`}</tbody></table></div></div>`;
 }
 
 function renderDirHistory(){
@@ -875,12 +1012,12 @@ function renderDirHistory(){
   const rows = filtered.map(r => `<tr>
     <td>${r.tuan||'-'}</td><td>${r.ngayUpdate||'-'}</td><td>${r.tenNhanVien}</td><td><b class="clickable-name" style="cursor:pointer; text-decoration:underline dotted; color:var(--navy);" onclick="showCustomerNote(&#39;${r.id}&#39;)" title="Bấm để xem ghi chú">${r.tenKH}</b></td><td>${r.cccd||'-'}</td><td>${r.sdt||'-'}</td>
     <td>${r.ngheNghiep||'-'}</td><td>${r.donVi||'-'}</td><td><span class="badge ${STATUS_CLASS[r.trangThai]||''}">${r.trangThai||'-'}</span></td>
-    <td>${r.choVay||0}</td><td>${r.huyDong||0}</td><td>${r.the||0}</td><td>${r.bhnt||0}</td><td>${r.bhpnt||0}</td><td>${r.kdhn||0}</td><td>${r.traiPhieu||0}</td><td>${r.tkHDT||0}</td>
+    ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
   </tr>`).join('');
   return `<div class="card"><h3>🗂️ Toàn bộ lịch sử cập nhật (${filtered.length} / ${records.length})</h3>${renderFilterBar()}
     <div class="table-scroll"><table><thead><tr>
       <th>Tuần</th><th>Ngày update</th><th>Nhân viên</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Nghề nghiệp</th><th>ĐV công tác</th><th>Trạng thái</th>
-      <th>Cho vay</th><th>Huy động</th><th>Thẻ</th><th>BHNT</th><th>BHPNT</th><th>KDHN</th><th>Trái phiếu</th><th>TK HĐT</th>
+      ${PRODUCTS.map(p=>`<th>${p.label}</th>`).join('')}
     </tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
