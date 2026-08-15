@@ -63,6 +63,7 @@
   .login-card p{margin:0 0 22px; font-size:13px; color:var(--text-soft);}
   label{display:block; font-size:12px; font-weight:600; color:var(--text-soft); margin:12px 0 6px;}
   input,select{width:100%; padding:9px 11px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; color:var(--text); background:#fff; outline:none;}
+  input[type=checkbox],input[type=radio],input[type=color]{width:auto; padding:0;}
   input:focus,select:focus{border-color:var(--teal);}
   .btn-primary{margin-top:20px; width:100%; padding:11px; background:var(--navy); color:#fff; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;}
   .btn-primary:hover{background:var(--navy-2);}
@@ -90,7 +91,7 @@
   .stat .num{font-size:20px; font-weight:700; color:var(--navy);}
   .stat .lbl{font-size:10.5px; color:var(--text-soft); margin-top:2px;}
   .filters{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
-  .filters select, .filters input{width:auto; min-width:150px;}
+  .filters select, .filters input:not([type=checkbox]):not([type=radio]){width:auto; min-width:150px;}
   .btn-sm{padding:6px 12px; font-size:12px; border-radius:6px; border:1.5px solid var(--teal); background:#fff; color:var(--teal); cursor:pointer; font-weight:600;}
   .btn-sm:hover{background:var(--teal-light);}
   .btn-add{background:var(--teal); color:#fff; border:none; padding:10px 18px; border-radius:8px; font-size:13.5px; font-weight:600; cursor:pointer;}
@@ -247,7 +248,13 @@ function closeNoteModal(){
 async function loadRecords(){
   const {data, error} = await sb.from('pipeline_records').select('*');
   if(error){ console.error(error); records = []; return; }
-  records = data.map(fromDb);
+  const mapped = data.map(fromDb);
+
+  // Loại bỏ dữ liệu của nhân viên đã bị XÓA hồ sơ (không còn trong bảng profiles) khỏi thống kê/báo cáo.
+  // Nhân viên chỉ bị "vô hiệu hóa" (chưa xóa hồ sơ) vẫn được tính bình thường.
+  const {data:existingProfiles} = await sb.from('profiles').select('id');
+  const validIds = new Set((existingProfiles||[]).map(p=>p.id));
+  records = mapped.filter(r => !r.ownerId || validIds.has(r.ownerId));
 }
 
 async function checkExistingSession(){
@@ -663,7 +670,7 @@ async function deleteRecord(id){
 /* ---------- DIRECTOR VIEW ---------- */
 let dirTab = 'summary';
 let settingsTab = 'products';
-let filters = {nv:'', tuan:'', trangThai:'', kw:''};
+let filters = {nv:new Set(), tuan:new Set(), trangThai:new Set(), kw:''};
 let dirChartData = null;
 
 let chartStatusFilter = new Set(["Thành công"]); // mặc định biểu đồ cột chỉ hiện trạng thái Thành công
@@ -1100,27 +1107,90 @@ function uniqueWeekRanges(){
   return [...new Set(records.map(r=>extractWeekRangeText(r.tuan)).filter(Boolean))].sort();
 }
 
+let openFilterDropdown = null; // 'nv' | 'tuan' | 'trangThai' | null
+let filtersTouched = {nv:false, tuan:false, trangThai:false}; // false = tự động đồng bộ theo "chọn hết" mỗi khi danh sách thay đổi
+
+function filterOptionsFor(key){
+  if(key==='nv') return uniqueVals('tenNhanVien');
+  if(key==='tuan') return uniqueWeekRanges();
+  if(key==='trangThai') return STATUS_LIST;
+  return [];
+}
+function toggleFilterDropdown(key){
+  openFilterDropdown = (openFilterDropdown === key) ? null : key;
+  render();
+}
+function toggleFilterOption(key, value, checked){
+  if(checked) filters[key].add(value); else filters[key].delete(value);
+  filtersTouched[key] = true;
+  render();
+}
+function setFilterAll(key){
+  filters[key] = new Set(filterOptionsFor(key));
+  filtersTouched[key] = true;
+  render();
+}
+function setFilterNone(key){
+  filters[key] = new Set();
+  filtersTouched[key] = true;
+  render();
+}
+function renderMultiSelectFilter(key, label, options){
+  const selected = filters[key];
+  const allChecked = options.length > 0 && selected.size === options.length;
+  const summary = allChecked ? `Tất cả ${label}` : selected.size===0 ? `Không chọn ${label}` : `${label} (${selected.size})`;
+  const isOpen = openFilterDropdown === key;
+  return `
+    <div style="position:relative; display:inline-block;" onclick="event.stopPropagation()">
+      <button type="button" class="btn-sm" onclick="toggleFilterDropdown('${key}')" style="white-space:nowrap;">${summary} ▾</button>
+      <div style="display:${isOpen?'block':'none'}; position:absolute; top:100%; left:0; z-index:60; background:#fff; border:1.5px solid var(--teal); border-radius:8px; margin-top:4px; width:190px; max-width:calc(100vw - 48px); max-height:280px; overflow-y:auto; box-shadow:0 8px 20px rgba(16,38,63,0.15); padding:6px 4px; box-sizing:border-box;">
+        <label style="display:flex; align-items:center; justify-content:flex-start; gap:8px; padding:5px 8px; cursor:pointer; font-size:12.5px; font-weight:700; color:var(--teal); border-bottom:1px solid var(--line); margin-bottom:4px;">
+          <input type="checkbox" style="width:16px; min-width:16px; max-width:16px; height:16px; flex:0 0 16px; padding:0; margin:0;" ${allChecked ? 'checked':''} onchange="this.checked ? setFilterAll('${key}') : setFilterNone('${key}')">
+          <span style="flex:1 1 auto; text-align:left;">Tất cả</span>
+        </label>
+        ${options.map(o=>`
+          <label style="display:flex; align-items:center; justify-content:flex-start; gap:8px; padding:5px 8px; cursor:pointer; font-size:12.5px;">
+            <input type="checkbox" style="width:16px; min-width:16px; max-width:16px; height:16px; flex:0 0 16px; padding:0; margin:0;" ${selected.has(o)?'checked':''} onchange="toggleFilterOption('${key}', '${o}', this.checked)">
+            <span style="flex:1 1 auto; text-align:left; overflow:hidden; text-overflow:ellipsis;">${o}</span>
+          </label>`).join('')}
+      </div>
+    </div>`;
+}
+
 function renderFilterBar(){
   const nvs = uniqueVals('tenNhanVien'); const weekRanges = uniqueWeekRanges();
   return `<div class="filters">
     <input id="fl-kw" placeholder="Tìm tên KH / CCCD / SĐT..." value="${filters.kw}"
       onkeydown="if(event.key==='Enter'){ filters.kw=this.value; render(); }">
     <button class="btn-sm" onclick="filters.kw=document.getElementById('fl-kw').value; render()">🔍 Tìm</button>
-    <select onchange="filters.nv=this.value; render()"><option value="">Tất cả nhân viên</option>${nvs.map(n=>`<option value="${n}" ${filters.nv===n?'selected':''}>${n}</option>`).join('')}</select>
-    <select onchange="filters.tuan=this.value; render()"><option value="">Tất cả các tuần</option>${weekRanges.map(w=>`<option value="${w}" ${filters.tuan===w?'selected':''}>${w}</option>`).join('')}</select>
-    <select onchange="filters.trangThai=this.value; render()"><option value="">Tất cả trạng thái</option>${STATUS_LIST.map(s=>`<option value="${s}" ${filters.trangThai===s?'selected':''}>${s}</option>`).join('')}</select>
-    <button class="btn-sm" onclick="filters={nv:'',tuan:'',trangThai:'',kw:''}; render()">Xóa lọc</button>
+    ${renderMultiSelectFilter('nv', 'nhân viên', nvs)}
+    ${renderMultiSelectFilter('tuan', 'tuần', weekRanges)}
+    ${renderMultiSelectFilter('trangThai', 'trạng thái', STATUS_LIST)}
+    <button class="btn-sm" onclick="filters={nv:new Set(),tuan:new Set(),trangThai:new Set(),kw:''}; filtersTouched={nv:false,tuan:false,trangThai:false}; openFilterDropdown=null; render()">Xóa lọc</button>
   </div>`;
 }
+// Đồng bộ "chọn hết" cho các bộ lọc mà người dùng chưa từng tự tay chỉnh - phải chạy TRƯỚC khi lọc dữ liệu
+function syncFilterDefaults(){
+  if(!filtersTouched.nv) filters.nv = new Set(uniqueVals('tenNhanVien'));
+  if(!filtersTouched.tuan) filters.tuan = new Set(uniqueWeekRanges());
+  if(!filtersTouched.trangThai) filters.trangThai = new Set(STATUS_LIST);
+}
+
 function applyFilters(list){
+  syncFilterDefaults();
   return list.filter(r=>{
-    if(filters.nv && r.tenNhanVien!==filters.nv) return false;
-    if(filters.tuan && extractWeekRangeText(r.tuan)!==filters.tuan) return false;
-    if(filters.trangThai && r.trangThai!==filters.trangThai) return false;
+    if(!filters.nv.has(r.tenNhanVien)) return false;
+    if(!filters.tuan.has(extractWeekRangeText(r.tuan))) return false;
+    if(!filters.trangThai.has(r.trangThai)) return false;
     if(filters.kw){ const kw=filters.kw.toLowerCase(); if(!`${r.tenKH} ${r.cccd} ${r.sdt}`.toLowerCase().includes(kw)) return false; }
     return true;
   });
 }
+
+// Đóng dropdown lọc khi bấm ra ngoài khung
+document.addEventListener('click', () => {
+  if(openFilterDropdown !== null){ openFilterDropdown = null; render(); }
+});
 
 // Trích số thứ tự tuần từ chuỗi "Tuần 3 (từ ... đến ...)" -> 3. Trả về NaN nếu không có.
 function extractWeekNumber(tuanStr){
