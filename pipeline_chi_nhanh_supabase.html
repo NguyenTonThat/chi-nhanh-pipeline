@@ -1240,9 +1240,9 @@ function buildWeeklyReportText(){
   const filtered = applyFilters(records);
   const latest = latestPerCustomer(filtered).sort((a,b)=> compareByDate(b,a));
 
-  // Mô tả phạm vi báo cáo dựa theo bộ lọc Tuần đang chọn
+  // Mô tả phạm vi báo cáo dựa theo bộ lọc Tuần đang chọn trong phần Tóm tắt
   const allWeeks = uniqueWeekRanges();
-  const weekScope = (filters.tuan.size > 0 && filters.tuan.size < allWeeks.length)
+  const weekScopeLabel = (filters.tuan.size > 0 && filters.tuan.size < allWeeks.length)
     ? [...filters.tuan].join(', ')
     : 'Tất cả các tuần';
 
@@ -1258,7 +1258,7 @@ function buildWeeklyReportText(){
 
   let lines = [];
   lines.push(`📊 BÁO CÁO PIPELINE KHÁCH HÀNG`);
-  lines.push(`Phạm vi: ${weekScope}`);
+  lines.push(`Phạm vi: ${weekScopeLabel}`);
   lines.push(`Ngày xuất: ${dateStr}`);
   lines.push('');
 
@@ -1331,7 +1331,7 @@ function renderDirSummary(){
     ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
   </div>
   <div style="display:flex; justify-content:flex-end; margin-bottom:14px;">
-    <button class="btn-add" onclick="copyWeeklyReport()">📋 Sao chép báo cáo tuần</button>
+    <button class="btn-add" onclick="copyWeeklyReport()">📋 Sao chép báo cáo tuần (theo bộ lọc Tuần bên dưới)</button>
   </div>`;
 
   const unitGroupsForRender = new Map();
