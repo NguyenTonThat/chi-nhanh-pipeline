@@ -1236,6 +1236,79 @@ function latestPerCustomer(list){
   return [...map.values()];
 }
 
+function buildWeeklyReportText(){
+  const filtered = applyFilters(records);
+  const latest = latestPerCustomer(filtered).sort((a,b)=> compareByDate(b,a));
+
+  // Mô tả phạm vi báo cáo dựa theo bộ lọc Tuần đang chọn
+  const allWeeks = uniqueWeekRanges();
+  const weekScope = (filters.tuan.size > 0 && filters.tuan.size < allWeeks.length)
+    ? [...filters.tuan].join(', ')
+    : 'Tất cả các tuần';
+
+  const today = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const dateStr = `${pad(today.getDate())}/${pad(today.getMonth()+1)}/${today.getFullYear()}`;
+
+  const byEmp = new Map();
+  latest.forEach(r=>{
+    if(!byEmp.has(r.tenNhanVien)) byEmp.set(r.tenNhanVien, []);
+    byEmp.get(r.tenNhanVien).push(r);
+  });
+
+  let lines = [];
+  lines.push(`📊 BÁO CÁO PIPELINE KHÁCH HÀNG`);
+  lines.push(`Phạm vi: ${weekScope}`);
+  lines.push(`Ngày xuất: ${dateStr}`);
+  lines.push('');
+
+  [...byEmp.keys()].sort().forEach(nv=>{
+    const rows = byEmp.get(nv);
+    lines.push(`👤 ${nv} (${rows.length} khách hàng)`);
+    const statusCounts = {};
+    STATUS_LIST.forEach(s=>{ const c = rows.filter(r=>r.trangThai===s).length; if(c>0) statusCounts[s]=c; });
+    if(Object.keys(statusCounts).length){
+      lines.push('- ' + Object.entries(statusCounts).map(([s,c])=>`${s}: ${c}`).join(' | '));
+    }
+    const sums = {};
+    PRODUCTS.forEach(p=>{ sums[p.key] = rows.reduce((s,r)=> s + (r[p.key]||0), 0); });
+    const sumLine = PRODUCTS.filter(p=>sums[p.key] > 0).map(p=>`${p.label}: ${sums[p.key].toLocaleString('vi-VN')} ${p.unit}`).join(' | ');
+    if(sumLine) lines.push('- ' + sumLine);
+    lines.push('');
+  });
+
+  lines.push('———');
+  lines.push(`Tổng chi nhánh: ${latest.length} khách hàng`);
+  PRODUCTS.forEach(p=>{
+    const total = latest.reduce((s,r)=> s + (r[p.key]||0), 0);
+    if(total > 0) lines.push(`${p.label}: ${total.toLocaleString('vi-VN')} ${p.unit}`);
+  });
+
+  return lines.join('\n');
+}
+
+async function copyWeeklyReport(){
+  const text = buildWeeklyReportText();
+  try{
+    await navigator.clipboard.writeText(text);
+    alert('Đã sao chép báo cáo tuần! Mở Zalo và dán (paste) vào group để gửi.');
+  }catch(e){
+    // Dự phòng cho trình duyệt/webview không hỗ trợ clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{
+      document.execCommand('copy');
+      alert('Đã sao chép báo cáo tuần! Mở Zalo và dán (paste) vào group để gửi.');
+    }catch(e2){
+      alert('Không tự sao chép được. Nội dung báo cáo:\n\n' + text);
+    }
+    document.body.removeChild(ta);
+  }
+}
+
 function renderDirSummary(){
   if(records.length===0) return `<div class="card"><div class="empty">Chưa có dữ liệu nào được nhân viên nhập.</div></div>`;
   const filtered = applyFilters(records);
@@ -1256,6 +1329,9 @@ function renderDirSummary(){
   const statCards = `<div class="stat-cards">
     <div class="stat"><div class="num">${latest.length}</div><div class="lbl">Tổng khách hàng</div></div>
     ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
+  </div>
+  <div style="display:flex; justify-content:flex-end; margin-bottom:14px;">
+    <button class="btn-add" onclick="copyWeeklyReport()">📋 Sao chép báo cáo tuần</button>
   </div>`;
 
   const unitGroupsForRender = new Map();
