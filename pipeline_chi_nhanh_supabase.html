@@ -1287,6 +1287,113 @@ function buildWeeklyReportText(){
   return lines.join('\n');
 }
 
+function wrapCanvasText(ctx, text, maxWidth){
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(w=>{
+    const test = current ? current + ' ' + w : w;
+    if(ctx.measureText(test).width > maxWidth && current){
+      lines.push(current); current = w;
+    } else current = test;
+  });
+  if(current) lines.push(current);
+  return lines.length ? lines : [''];
+}
+
+function exportWeeklyReportPNG(){
+  const width = 900;
+  const padding = 30;
+  const lineHeight = 22;
+  const maxTextWidth = width - padding*2;
+
+  const measureCtx = document.createElement('canvas').getContext('2d');
+  const reportText = buildWeeklyReportText();
+  const rawLines = reportText.split('\n');
+
+  const processed = [];
+  rawLines.forEach(line=>{
+    if(line.trim()===''){ processed.push({type:'spacer'}); return; }
+    if(line.trim()==='———'){ processed.push({type:'divider'}); return; }
+    const isHeader = line.startsWith('👤');
+    const text = isHeader ? line.replace('👤','').trim() : line;
+    measureCtx.font = isHeader ? 'bold 15px Arial, sans-serif' : '13px Arial, sans-serif';
+    wrapCanvasText(measureCtx, text, maxTextWidth).forEach(w=> processed.push({type: isHeader?'header':'text', text:w}));
+  });
+
+  const chartIds = ['chart-status','chart-employee','chart-product-money','chart-product-card'];
+  const chartTitles = {
+    'chart-status':'Phân bổ khách hàng theo trạng thái',
+    'chart-employee':'Số lượng khách hàng theo nhân viên',
+    'chart-product-money':'Pipeline theo sản phẩm (Triệu đồng)',
+    'chart-product-card':'Số lượng Thẻ theo trạng thái'
+  };
+  const chartImgs = [];
+  chartIds.forEach(id=>{
+    const c = document.getElementById(id);
+    if(!c) return;
+    const imgW = maxTextWidth;
+    const imgH = imgW * (c.height / c.width);
+    chartImgs.push({title:chartTitles[id]||id, canvas:c, w:imgW, h:imgH});
+  });
+
+  let totalHeight = padding*2 + 40;
+  processed.forEach(p=>{
+    if(p.type==='spacer') totalHeight += 10;
+    else if(p.type==='divider') totalHeight += 16;
+    else totalHeight += lineHeight;
+  });
+  chartImgs.forEach(ci=> totalHeight += 26 + ci.h + 20);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = Math.ceil(totalHeight);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let y = padding;
+  ctx.fillStyle = '#10263F';
+  ctx.font = 'bold 20px Arial, sans-serif';
+  ctx.fillText('BÁO CÁO PIPELINE KHÁCH HÀNG', padding, y + 18);
+  y += 40;
+
+  processed.forEach(p=>{
+    if(p.type==='spacer'){ y += 10; return; }
+    if(p.type==='divider'){
+      ctx.strokeStyle = '#E1E6EA';
+      ctx.beginPath(); ctx.moveTo(padding, y+6); ctx.lineTo(width-padding, y+6); ctx.stroke();
+      y += 16; return;
+    }
+    ctx.fillStyle = p.type==='header' ? '#0E7C7B' : '#1C2B36';
+    ctx.font = p.type==='header' ? 'bold 15px Arial, sans-serif' : '13px Arial, sans-serif';
+    ctx.fillText(p.text, padding, y + 14);
+    y += lineHeight;
+  });
+
+  chartImgs.forEach(ci=>{
+    ctx.fillStyle = '#10263F';
+    ctx.font = 'bold 13px Arial, sans-serif';
+    ctx.fillText(ci.title, padding, y + 14);
+    y += 24;
+    ctx.drawImage(ci.canvas, padding, y, ci.w, ci.h);
+    y += ci.h + 20;
+  });
+
+  canvas.toBlob(blob=>{
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date();
+    const pad2 = n => String(n).padStart(2,'0');
+    a.href = url;
+    a.download = `bao_cao_pipeline_${today.getFullYear()}${pad2(today.getMonth()+1)}${pad2(today.getDate())}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
 async function copyWeeklyReport(){
   const text = buildWeeklyReportText();
   try{
@@ -1330,8 +1437,8 @@ function renderDirSummary(){
     <div class="stat"><div class="num">${latest.length}</div><div class="lbl">Tổng khách hàng</div></div>
     ${STATUS_LIST.map(s=>`<div class="stat"><div class="num">${byStatus[s]}</div><div class="lbl">${s}</div></div>`).join('')}
   </div>
-  <div style="display:flex; justify-content:flex-end; margin-bottom:14px;">
-    <button class="btn-add" onclick="copyWeeklyReport()">📋 Sao chép báo cáo tuần (theo bộ lọc Tuần bên dưới)</button>
+  <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-bottom:14px;">
+    <button class="btn-add" onclick="exportWeeklyReportPNG()">🖼️ Xuất ảnh (kèm biểu đồ)</button>
   </div>`;
 
   const unitGroupsForRender = new Map();
