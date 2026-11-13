@@ -19,6 +19,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --navy:#10263F; --navy-2:#16324F; --teal:#0E7C7B; --teal-light:#E4F3F2;
@@ -1301,6 +1302,42 @@ function wrapCanvasText(ctx, text, maxWidth){
   return lines.length ? lines : [''];
 }
 
+function buildExcelRow(r){
+  const row = {
+    'Tên khách hàng': r.tenKH, 'CCCD': r.cccd||'', 'SĐT': r.sdt||'',
+    'Nghề nghiệp': r.ngheNghiep||'', 'Đơn vị công tác': r.donVi||'',
+    'Nhân viên': r.tenNhanVien, 'Mã AO': r.maAO||'',
+    'Tuần': r.tuan||'', 'Ngày update': r.ngayUpdate||'', 'Trạng thái': r.trangThai||'',
+    'Ghi chú': r.ghiChu||''
+  };
+  PRODUCTS.forEach(p=>{ row[`${p.label} (${p.unit})`] = r[p.key] || 0; });
+  return row;
+}
+
+function downloadExcel(rows, filename){
+  if(!window.XLSX){ alert('Không tải được thư viện xuất Excel. Vui lòng kiểm tra kết nối mạng rồi thử lại.'); return; }
+  if(rows.length === 0){ alert('Không có dữ liệu để xuất.'); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Dữ liệu');
+  XLSX.writeFile(wb, filename);
+}
+
+function exportSummaryExcel(){
+  const filtered = applyFilters(records);
+  const latest = latestPerCustomer(filtered).sort((a,b)=> compareByDate(b,a));
+  const today = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  downloadExcel(latest.map(buildExcelRow), `danh_sach_khach_hang_${today.getFullYear()}${pad(today.getMonth()+1)}${pad(today.getDate())}.xlsx`);
+}
+
+function exportHistoryExcel(){
+  const filtered = applyFilters(records).sort((a,b)=> compareByDate(b,a));
+  const today = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  downloadExcel(filtered.map(buildExcelRow), `lich_su_cap_nhat_${today.getFullYear()}${pad(today.getMonth()+1)}${pad(today.getDate())}.xlsx`);
+}
+
 function exportWeeklyReportPNG(){
   const width = 900;
   const padding = 30;
@@ -1439,6 +1476,7 @@ function renderDirSummary(){
   </div>
   <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-bottom:14px;">
     <button class="btn-add" onclick="exportWeeklyReportPNG()">🖼️ Xuất ảnh (kèm biểu đồ)</button>
+    <button class="btn-add" onclick="exportSummaryExcel()">📊 Xuất Excel</button>
   </div>`;
 
   const unitGroupsForRender = new Map();
@@ -1498,6 +1536,7 @@ function renderDirHistory(){
     ${PRODUCTS.map(p=>`<td>${r[p.key]||0}</td>`).join('')}
   </tr>`).join('');
   return `<div class="card"><h3>🗂️ Toàn bộ lịch sử cập nhật (${filtered.length} / ${records.length})</h3>${renderFilterBar()}
+    <div style="display:flex; justify-content:flex-end; margin-bottom:10px;"><button class="btn-add" onclick="exportHistoryExcel()">📊 Xuất Excel</button></div>
     <div class="table-scroll"><table><thead><tr>
       <th>Tuần</th><th>Ngày update</th><th>Nhân viên</th><th>Tên KH</th><th>CCCD</th><th>SĐT</th><th>Nghề nghiệp</th><th>ĐV công tác</th><th>Trạng thái</th>
       ${PRODUCTS.map(p=>`<th>${p.label}</th>`).join('')}
